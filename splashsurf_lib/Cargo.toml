@@ -75,3 +75,6 @@ sdfu = { git = "https://github.com/w1th0utnam3/sdfu", features = ["ultraviolet"]
 name = "splashsurf_lib_benches"
 path = "benches/splashsurf_lib_benches.rs"
 harness = false
+
+[profile.release]
+debug = 1

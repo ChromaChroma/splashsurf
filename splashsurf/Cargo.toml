@@ -27,3 +27,6 @@ lexical-sort = "0.3"
 indicatif = "0.17"
 parking_lot = "0.12"
 once_cell = "1.18"
+
+[profile.release]
+debug = 1
