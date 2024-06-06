@@ -1,3 +1,5 @@
+#![feature(portable_simd)]
+#![feature(stdarch_x86_avx512)]
 #![cfg_attr(doc_cfg, feature(doc_cfg))]
 
 //!
