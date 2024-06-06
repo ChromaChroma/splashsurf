@@ -12,10 +12,12 @@ mod logging;
 #[cfg(test)]
 mod tests;
 
+use std::collections::{HashMap, HashSet};
 use crate::allocator::GetPeakAllocatedMemory;
 use anyhow::Context;
 use clap::Parser;
 use log::info;
+use splashsurf_lib::profiling::{PROFILER, ScopeId};
 
 // Register allocator to track memory usage, might decrease performance if enabled
 register_counting_allocator!(GLOBAL_ALLOCATOR, enable = false);
@@ -113,6 +115,12 @@ fn run_splashsurf() -> Result<(), anyhow::Error> {
         "Finished at {}.",
         chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, false)
     );
+
+    // Re-log the total computation time.
+    info!("{}", splashsurf_lib::profiling::write_to_string()
+        .unwrap()
+        .split("\n")
+        .collect::<Vec<_>>()[0]);
 
     Ok(())
 }
