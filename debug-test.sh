@@ -4,8 +4,8 @@
 #cargo build
 #cd .scripts
 
-../target/release/splashsurf.exe reconstruct ../data/cube_2366_particles.vtk \
- --output-dir ../data/converted \
+../target/release/splashsurf.exe reconstruct ./data/cube_2366_particles.vtk \
+ --output-dir ./data/converted \
  -r=0.025 -l=2.0 -c=0.5 -t=0.6 \
  --subdomain-grid=on \
  --mesh-cleanup=on \

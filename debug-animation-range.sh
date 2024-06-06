@@ -1,7 +1,7 @@
 #! /bin/bash
-../target/debug/splashsurf.exe reconstruct ../data/extra/DoubleDamBreakWithSphere/vtk/ParticleData_Fluid_{}.vtk \
+../target/debug/splashsurf.exe reconstruct ./data/DoubleDamBreakWithSphere/vtk/ParticleData_Fluid_{}.vtk \
  --start-index=0 --end-index=258 \
- --output-dir ../data/extra/DoubleDamBreakWithSphere/surface-output \
+ --output-dir ./data/DoubleDamBreakWithSphere/surface-output \
  --quiet \
  -r=0.025 -l=2.0 -c=0.5 -t=0.6 \
  --subdomain-grid=on \
