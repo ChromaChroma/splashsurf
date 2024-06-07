@@ -1,4 +1,4 @@
-use std::arch::x86_64::{__m256i, _mm256_add_epi64, _mm256_extract_epi64, _mm256_max_epu64, _mm256_min_epi64, _mm256_min_epu64, _mm256_mul_epi32, _mm256_set1_epi64x, _mm256_set1_epi8, _mm256_set_epi64x, _mm256_storeu_epi64, _mm256_sub_epi64};
+use std::arch::x86_64::{__m128i, __m256i, _mm256_add_epi64, _mm256_extract_epi64, _mm256_extractf128_ps, _mm256_extracti128_si256, _mm256_max_epi32, _mm256_max_epi64, _mm256_max_epu64, _mm256_min_epi64, _mm256_min_epu32, _mm256_min_epu64, _mm256_mul_epi32, _mm256_set1_epi64x, _mm256_set1_epi8, _mm256_set_epi64x, _mm256_storeu_epi64, _mm256_sub_epi64, _mm_max_epi64, _mm_set1_epi64x};
 use anyhow::{anyhow, Context};
 use arrayvec::ArrayVec;
 use itertools::Itertools;
@@ -9,6 +9,8 @@ use num_traits::{FromPrimitive, NumCast};
 use parking_lot::Mutex;
 use rayon::prelude::*;
 use std::cell::RefCell;
+use std::simd::{i64x4, Simd};
+use std::simd::cmp::SimdOrd;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use thread_local::ThreadLocal;
 
@@ -693,9 +695,11 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
     global_particle_densities: &[R],
     subdomains: &Subdomains<I>,
 ) -> Vec<SurfacePatch<I, R>> {
-    let simd_i64_zero;
+    let simd_x_zeros: i64x4;
+    // let simd_i64_zero;
     unsafe {
-        simd_i64_zero = _mm256_set1_epi64x(I::zero().to_i64().unwrap());
+        simd_x_zeros = i64x4::splat(0);
+        // simd_i64_zero = _mm256_set1_epi64x(I::zero().to_i64().unwrap());
     }
 
     profile!(parent, "reconstruction");
@@ -855,22 +859,34 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
         ).unwrap();
         unsafe {
             let [x0, y0, z0] = subdomain_idx.index();
-            let simd_subdomain_ijk = _mm256_set_epi64x(
-                // Check if this creates loss
+            // let simd_subdomain_ijk = _mm256_set_epi64x(
+            //     // Check if this creates loss
+            //     x0.to_i64().unwrap(),
+            //     y0.to_i64().unwrap(),
+            //     z0.to_i64().unwrap(),
+            //     0,
+            // );
+            let simd_x_subdomain_ijk: i64x4 = Simd::from([
                 x0.to_i64().unwrap(),
                 y0.to_i64().unwrap(),
                 z0.to_i64().unwrap(),
                 0,
-            );
+            ]);
 
             let [x00, y00, z00] = mc_grid.cells_per_dim();
-            let cells_per_subdomain = _mm256_set_epi64x(
-                // Check if this creates loss u64 -> i64
+            // let cells_per_subdomain = _mm256_set_epi64x(
+            //     // Check if this creates loss u64 -> i64
+            //     x00.to_i64().unwrap(),
+            //     y00.to_i64().unwrap(),
+            //     z00.to_i64().unwrap(),
+            //     0,
+            // );
+            let simd_x_cells_per_subdomain: i64x4 = Simd::from([
                 x00.to_i64().unwrap(),
                 y00.to_i64().unwrap(),
                 z00.to_i64().unwrap(),
                 0,
-            );
+            ]);
 
             levelset_grid.fill(R::zero());
             levelset_grid.resize(mc_total_points.to_usize().unwrap(), R::zero());
@@ -879,13 +895,21 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
                 profile!("density grid loop");
 
                 let extents = mc_grid.points_per_dim();
-                let simd_extends = _mm256_set_epi64x(
+                // let simd_extends = _mm256_set_epi64x(
+                //     extents[0].to_i64().unwrap(),
+                //     extents[1].to_i64().unwrap(),
+                //     extents[2].to_i64().unwrap(),
+                //     0,
+                // );
+                let simd_x_extends: i64x4 = Simd::from([
                     extents[0].to_i64().unwrap(),
                     extents[1].to_i64().unwrap(),
                     extents[2].to_i64().unwrap(),
                     0,
-                );
-                let simd_cube_radius = _mm256_set1_epi64x(cube_radius.to_i64().unwrap());
+                ]);
+
+                // let simd_cube_radius = _mm256_set1_epi64x(cube_radius.to_i64().unwrap());
+                let simd_x_cube_radius: i64x4 = i64x4::splat(cube_radius.to_i64().unwrap());
 
                 for (p_i, rho_i) in subdomain_particles
                     .iter()
@@ -913,110 +937,144 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
                     // ];
 
                     // SIMD
-                    let simd_particle_cells = _mm256_set_epi64x(
+                    // let simd_particle_cells = _mm256_set_epi64x(
+                    //     particle_cell[0].to_i64().unwrap(),
+                    //     particle_cell[1].to_i64().unwrap(),
+                    //     particle_cell[2].to_i64().unwrap(),
+                    //     0,
+                    // );
+                    let simd_x_particle_cells: i64x4 = Simd::from([
                         particle_cell[0].to_i64().unwrap(),
                         particle_cell[1].to_i64().unwrap(),
                         particle_cell[2].to_i64().unwrap(),
                         0,
-                    );
+                    ]);
+
                     // union Vec3simd4x64 {
                     //     x_4x64: [GlobalIndex; 4],
                     //     x_m256: __m256i,
                     // }
-                    let simd_lower: __m256i = _mm256_min_epi64(
-                        _mm256_sub_epi64(simd_particle_cells, simd_cube_radius),
-                        simd_i64_zero,
-                    );
-                    let simd_upper: __m256i = _mm256_min_epu64(
-                        _mm256_add_epi64(simd_particle_cells, simd_cube_radius),
-                        simd_extends,
-                    );
-                    let lower: [u64; 4] = bytemuck::cast(simd_lower);
-                    let upper: [u64; 4] = bytemuck::cast(simd_upper);
-                    // _mm256_extract_epi64(simd_lower);
+                    // union Vec3simd_256_2x128 {
+                    //     x_2xm128: [__m128i; 2],
+                    //     x_m256: __m256i,
+                    // }
+                    // let simd_subtracted = Vec3simd_256_2x128 {
+                    //     x_m256: _mm256_sub_epi64(simd_particle_cells, simd_cube_radius)
+                    // };
+                    //
+                    // let simd_lower = _mm_max_epi64(
+                    //     simd_subtracted.x_2xm128[0],
+                    //     _mm_set1_epi64x(I::zero().to_i64().unwrap()),
+                    //     // _mm256_sub_epi64(simd_particle_cells, simd_cube_radius),
+                    //     // simd_i64_zero,
+                    // );
+
+                    let simd_x_lower: i64x4 = (simd_x_particle_cells - simd_x_cube_radius).simd_max(simd_x_zeros);
+                    let simd_x_upper: i64x4 = (simd_x_particle_cells + simd_x_cube_radius).simd_min(simd_x_extends);
 
 
-                    // // Loop over all grid points around the enclosing cell
-                    // // for i in I::range(lower[0], upper[0]).iter() {
-                    // //     for j in I::range(lower[1], upper[1]).iter() {
-                    // //         for k in I::range(lower[2], upper[2]).iter() {
-                    // //             let local_point = mc_grid
-                    // //                 .get_point([i, j, k])
-                    // //                 .expect("point has to be part of the subdomain grid");
-                    // for i in lower[0]..=upper[0] {
-                    //     for j in lower[1]..=upper[1] {
-                    //         for k in lower[2]..=upper[2] {
+                    // let simd_lower: __m256i = _mm256_max_epi64(
+                    //     _mm256_sub_epi64(simd_particle_cells, simd_cube_radius),
+                    //     simd_i64_zero,
+                    // );
+                    // let simd_upper: __m256i = _mm256_min_epu64(
+                    //     _mm256_add_epi64(simd_particle_cells, simd_cube_radius),
+                    //     simd_extends,
+                    // );
+
+
+                    // let lower: [u64; 4] = bytemuck::cast(simd_x_lower);
+                    // let upper: [u64; 4] = bytemuck::cast(simd_x_upper);
+                    // // _mm256_extract_epi64(simd_lower);
+
+
+                    // Loop over all grid points around the enclosing cell
+                    // for i in I::range(lower[0], upper[0]).iter() {
+                    //     for j in I::range(lower[1], upper[1]).iter() {
+                    //         for k in I::range(lower[2], upper[2]).iter() {
                     //             let local_point = mc_grid
-                    //                 .get_point([
-                    //                     I::from_u64(i).unwrap(),
-                    //                     I::from_u64(j).unwrap(),
-                    //                     I::from_u64(k).unwrap()
-                    //                 ])
+                    //                 .get_point([i, j, k])
                     //                 .expect("point has to be part of the subdomain grid");
-                    //
-                    //
-                    //             // let simd_point_ijk = _mm256_set_epi64x(
-                    //             //     // Check if this creates loss
-                    //             //     i as i64,
-                    //             //     j as i64,
-                    //             //     k as i64,
-                    //             //     0,
-                    //             // );
-                    //             // let [i, j, k, _] = simd_point_ijk;
-                    //
-                    //             // let simd_global_point_ijk: Vec3simd4x64 = Vec3simd4x64 {
-                    //             //     x_m256: _mm256_add_epi64(
-                    //             //         // Rough and probably wrong assumption that the values will only reside in the lower 32 bit of i64!!!
-                    //             //         _mm256_mul_epi32(simd_subdomain_ijk, cells_per_subdomain),
-                    //             //         simd_point_ijk,
-                    //             //     )
-                    //             // };
-                    //             // // let mut v: [i64; 4] = [0, 0, 0, 0];
-                    //             // // _mm256_storeu_epi64(v.as_mut_ptr(), simd_global_point_ijk);
-                    //             // // let [x1, x2, x3, _] = v;
-                    //             // let [x0, x1, x2, _] = simd_global_point_ijk.x_4x64;
-                    //             // let global_point = parameters
-                    //             //     .global_marching_cubes_grid
-                    //             //     .get_point([x0, x1, x2])
-                    //             //     .expect("point has to be part of the global mc grid");
-                    //
-                    //             let subdomain_ijk = subdomain_idx.index().clone()
-                    //                 .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
-                    //             let cells_per_subdomain = mc_grid.cells_per_dim().clone()
-                    //                 .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
-                    //
-                    //             // Use global coordinate calculation for consistency with neighboring domains
-                    //             let global_point_ijk = [
-                    //                 (subdomain_ijk[0] * cells_per_subdomain[0] + i),
-                    //                 (subdomain_ijk[1] * cells_per_subdomain[1] + j),
-                    //                 (subdomain_ijk[2] * cells_per_subdomain[2] + k),
-                    //             ];
-                    //             let global_point = parameters
-                    //                 .global_marching_cubes_grid
-                    //                 .get_point(global_point_ijk)
-                    //                 .expect("point has to be part of the global mc grid");
-                    //             let point_coordinates = parameters
-                    //                 .global_marching_cubes_grid
-                    //                 .point_coordinates(&global_point);
-                    //
-                    //             let dx = p_i - point_coordinates;
-                    //             let dx_norm_sq = dx.norm_squared();
-                    //
-                    //             if dx_norm_sq < squared_support_with_margin {
-                    //                 let v_i = parameters.particle_rest_mass / rho_i;
-                    //                 let r = dx_norm_sq.sqrt();
-                    //                 let w_ij = kernel.evaluate(r);
-                    //                 //let w_ij = kernel.evaluate(dx_norm_sq);
-                    //
-                    //                 let interpolated_value = v_i * w_ij;
-                    //
-                    //                 let flat_point_idx = mc_grid.flatten_point_index(&local_point);
-                    //                 let flat_point_idx = flat_point_idx.to_usize().unwrap();
-                    //                 levelset_grid[flat_point_idx] += interpolated_value;
-                    //             }
-                    //         }//
-                    //     }//
-                    // }//
+
+
+                    let lower: [u64; 4] = std::mem::transmute(simd_x_lower);
+                    let upper: [u64; 4] = std::mem::transmute(simd_x_upper);
+
+                    for i in lower[0]..(upper[0] - 1) {
+                        for j in lower[1]..(upper[1] - 1) {
+                            for k in lower[2]..(upper[2] - 1) {
+                                let n_points_per_dim = mc_grid.points_per_dim();
+                                let local_point = mc_grid
+                                    .get_point([
+                                        I::from_u64(i).unwrap(),
+                                        I::from_u64(j).unwrap(),
+                                        I::from_u64(k).unwrap()
+                                    ])
+                                    .expect("point has to be part of the subdomain grid");
+
+
+                                // let simd_point_ijk = _mm256_set_epi64x(
+                                //     // Check if this creates loss
+                                //     i as i64,
+                                //     j as i64,
+                                //     k as i64,
+                                //     0,
+                                // );
+                                // let [i, j, k, _] = simd_point_ijk;
+
+                                // let simd_global_point_ijk: Vec3simd4x64 = Vec3simd4x64 {
+                                //     x_m256: _mm256_add_epi64(
+                                //         // Rough and probably wrong assumption that the values will only reside in the lower 32 bit of i64!!!
+                                //         _mm256_mul_epi32(simd_subdomain_ijk, cells_per_subdomain),
+                                //         simd_point_ijk,
+                                //     )
+                                // };
+                                // // let mut v: [i64; 4] = [0, 0, 0, 0];
+                                // // _mm256_storeu_epi64(v.as_mut_ptr(), simd_global_point_ijk);
+                                // // let [x1, x2, x3, _] = v;
+                                // let [x0, x1, x2, _] = simd_global_point_ijk.x_4x64;
+                                // let global_point = parameters
+                                //     .global_marching_cubes_grid
+                                //     .get_point([x0, x1, x2])
+                                //     .expect("point has to be part of the global mc grid");
+
+                                let subdomain_ijk = subdomain_idx.index().clone()
+                                    .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
+                                let cells_per_subdomain = mc_grid.cells_per_dim().clone()
+                                    .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
+
+                                // Use global coordinate calculation for consistency with neighboring domains
+                                let global_point_ijk = [
+                                    (subdomain_ijk[0] * cells_per_subdomain[0] + i),
+                                    (subdomain_ijk[1] * cells_per_subdomain[1] + j),
+                                    (subdomain_ijk[2] * cells_per_subdomain[2] + k),
+                                ];
+                                let global_point = parameters
+                                    .global_marching_cubes_grid
+                                    .get_point(global_point_ijk)
+                                    .expect("point has to be part of the global mc grid");
+                                let point_coordinates = parameters
+                                    .global_marching_cubes_grid
+                                    .point_coordinates(&global_point);
+
+                                let dx = p_i - point_coordinates;
+                                let dx_norm_sq = dx.norm_squared();
+
+                                if dx_norm_sq < squared_support_with_margin {
+                                    let v_i = parameters.particle_rest_mass / rho_i;
+                                    let r = dx_norm_sq.sqrt();
+                                    let w_ij = kernel.evaluate(r);
+                                    //let w_ij = kernel.evaluate(dx_norm_sq);
+
+                                    let interpolated_value = v_i * w_ij;
+
+                                    let flat_point_idx = mc_grid.flatten_point_index(&local_point);
+                                    let flat_point_idx = flat_point_idx.to_usize().unwrap();
+                                    levelset_grid[flat_point_idx] += interpolated_value;
+                                }
+                            }//
+                        }//
+                    }//
                 }
             }
         }
