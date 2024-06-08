@@ -1003,7 +1003,6 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
                     for i in lower[0]..(upper[0] - 1) {
                         for j in lower[1]..(upper[1] - 1) {
                             for k in lower[2]..(upper[2] - 1) {
-                                let n_points_per_dim = mc_grid.points_per_dim();
                                 let local_point = mc_grid
                                     .get_point([
                                         I::from_u64(i).unwrap(),
