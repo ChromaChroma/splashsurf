@@ -1,4 +1,3 @@
-use std::arch::x86_64::{__m128i, __m256i, _mm256_add_epi64, _mm256_extract_epi64, _mm256_extractf128_ps, _mm256_extracti128_si256, _mm256_max_epi32, _mm256_max_epi64, _mm256_max_epu64, _mm256_min_epi64, _mm256_min_epu32, _mm256_min_epu64, _mm256_mul_epi32, _mm256_set1_epi64x, _mm256_set1_epi8, _mm256_set_epi64x, _mm256_storeu_epi64, _mm256_sub_epi64, _mm_max_epi64, _mm_set1_epi64x};
 use anyhow::{anyhow, Context};
 use arrayvec::ArrayVec;
 use itertools::Itertools;
@@ -695,12 +694,8 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
     global_particle_densities: &[R],
     subdomains: &Subdomains<I>,
 ) -> Vec<SurfacePatch<I, R>> {
-    let simd_x_zeros: i64x4;
-    // let simd_i64_zero;
-    unsafe {
-        simd_x_zeros = i64x4::splat(0);
-        // simd_i64_zero = _mm256_set1_epi64x(I::zero().to_i64().unwrap());
-    }
+    let simd_zeros: i64x4 = i64x4::splat(0);
+    let simd_twos: i64x4 = i64x4::splat(I::two().to_i64().unwrap());
 
     profile!(parent, "reconstruction");
 
@@ -710,6 +705,7 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
     // Compute radial distance in terms of grid points we have to evaluate for each particle
     let cube_radius = I::from((parameters.compact_support_radius / parameters.cube_size).ceil())
         .expect("kernel radius in cubes has to fit in index type");
+    let simd_cube_radius: i64x4 = i64x4::splat(cube_radius.to_i64().unwrap());
     // Kernel
     let kernel = CubicSplineKernel::new(parameters.compact_support_radius);
     //let kernel = DiscreteSquaredDistanceCubicKernel::new::<f64>(1000, parameters.compact_support_radius);
@@ -832,7 +828,7 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
 
         // Collect all particle positions and densities of this subdomain
         {
-            // profile!("collect subdomain data");
+            //profile!("collect subdomain data");
             gather_subdomain_data(
                 global_particles,
                 subdomain_particle_indices,
@@ -845,235 +841,181 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
             );
         }
 
-        // Get the cell index and AABB of the subdomain
+        // Get the cell index and AABB of the subdomain, and the point
         let subdomain_idx = parameters
             .subdomain_grid
             .try_unflatten_cell_index(flat_subdomain_idx)
             .expect("Subdomain cell does not exist");
         let subdomain_aabb = parameters.subdomain_grid.cell_aabb(&subdomain_idx);
+        let subdomain_ijk = subdomain_idx.index()
+            .clone()
+            .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
 
+        // Marching Cubes grid
         let mc_grid = UniformCartesianCubeGrid3d::new(
             subdomain_aabb.min(),
             &[parameters.subdomain_cubes; 3],
             parameters.cube_size,
         ).unwrap();
-        unsafe {
-            let [x0, y0, z0] = subdomain_idx.index();
-            // let simd_subdomain_ijk = _mm256_set_epi64x(
-            //     // Check if this creates loss
-            //     x0.to_i64().unwrap(),
-            //     y0.to_i64().unwrap(),
-            //     z0.to_i64().unwrap(),
-            //     0,
-            // );
-            let simd_x_subdomain_ijk: i64x4 = Simd::from([
-                x0.to_i64().unwrap(),
-                y0.to_i64().unwrap(),
-                z0.to_i64().unwrap(),
-                0,
-            ]);
+        let cells_per_subdomain = mc_grid.cells_per_dim()
+            .clone()
+            .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
 
+
+        levelset_grid.fill(R::zero());
+        levelset_grid.resize(mc_total_points.to_usize().unwrap(), R::zero());
+
+        {
+            profile!("density grid loop");
+
+            // let extents = mc_grid.points_per_dim();
             let [x00, y00, z00] = mc_grid.cells_per_dim();
-            // let cells_per_subdomain = _mm256_set_epi64x(
-            //     // Check if this creates loss u64 -> i64
-            //     x00.to_i64().unwrap(),
-            //     y00.to_i64().unwrap(),
-            //     z00.to_i64().unwrap(),
-            //     0,
-            // );
-            let simd_x_cells_per_subdomain: i64x4 = Simd::from([
+            let simd_extends: i64x4 = Simd::from([
                 x00.to_i64().unwrap(),
                 y00.to_i64().unwrap(),
                 z00.to_i64().unwrap(),
                 0,
             ]);
 
-            levelset_grid.fill(R::zero());
-            levelset_grid.resize(mc_total_points.to_usize().unwrap(), R::zero());
 
+
+
+            for (p_i, rho_i) in subdomain_particles
+                .iter()
+                .copied()
+                .zip(subdomain_particle_densities.iter().copied())
             {
-                profile!("density grid loop");
+                // Get grid cell containing particle
+                let particle_cell = mc_grid.enclosing_cell(&p_i);
 
-                let extents = mc_grid.points_per_dim();
-                // let simd_extends = _mm256_set_epi64x(
-                //     extents[0].to_i64().unwrap(),
-                //     extents[1].to_i64().unwrap(),
-                //     extents[2].to_i64().unwrap(),
-                //     0,
-                // );
-                let simd_x_extends: i64x4 = Simd::from([
-                    extents[0].to_i64().unwrap(),
-                    extents[1].to_i64().unwrap(),
-                    extents[2].to_i64().unwrap(),
+                // Compute lower and upper bounds of the grid points possibly affected by the particle
+                // We want to loop over the vertices of the enclosing cells plus all points in `cube_radius` distance from the cell
+                //
+                // OLD
+                // let lower = [
+                //     (particle_cell[0] - cube_radius).max(I::zero()),
+                //     (particle_cell[1] - cube_radius).max(I::zero()),
+                //     (particle_cell[2] - cube_radius).max(I::zero()),
+                // ];
+                // let upper = [
+                //     // We add 2 because
+                //     //  - we want to loop over all grid points of the cell (+1 for upper points) + the radius
+                //     //  - the upper range limit is exclusive (+1)
+                //     (particle_cell[0] + cube_radius + I::two()).min(extents[0]),
+                //     (particle_cell[1] + cube_radius + I::two()).min(extents[1]),
+                //     (particle_cell[2] + cube_radius + I::two()).min(extents[2]),
+                // ];
+                let simd_particle_cells: i64x4 = Simd::from([
+                    particle_cell[0].to_i64().unwrap(),
+                    particle_cell[1].to_i64().unwrap(),
+                    particle_cell[2].to_i64().unwrap(),
                     0,
                 ]);
+                //Compute lower and uper bounds through using SIMD
+                let simd_lower: i64x4 = (simd_particle_cells - simd_cube_radius).simd_max(simd_zeros);
+                let simd_upper: i64x4 = (simd_particle_cells + simd_cube_radius + simd_twos).simd_min(simd_extends);
 
-                // let simd_cube_radius = _mm256_set1_epi64x(cube_radius.to_i64().unwrap());
-                let simd_x_cube_radius: i64x4 = i64x4::splat(cube_radius.to_i64().unwrap());
-
-                for (p_i, rho_i) in subdomain_particles
-                    .iter()
-                    .copied()
-                    .zip(subdomain_particle_densities.iter().copied())
-                {
-                    // Get grid cell containing particle
-                    let particle_cell = mc_grid.enclosing_cell(&p_i);
-
-
-                    // Compute lower and upper bounds of the grid points possibly affected by the particle
-                    // We want to loop over the vertices of the enclosing cells plus all points in `cube_radius` distance from the cell
-                    // let lower = [
-                    //     (particle_cell[0] - cube_radius).max(I::zero()),
-                    //     (particle_cell[1] - cube_radius).max(I::zero()),
-                    //     (particle_cell[2] - cube_radius).max(I::zero()),
-                    // ];
-                    // let upper = [
-                    //     // We add 2 because
-                    //     //  - we want to loop over all grid points of the cell (+1 for upper points) + the radius
-                    //     //  - the upper range limit is exclusive (+1)
-                    //     (particle_cell[0] + cube_radius + I::two()).min(extents[0]),
-                    //     (particle_cell[1] + cube_radius + I::two()).min(extents[1]),
-                    //     (particle_cell[2] + cube_radius + I::two()).min(extents[2]),
-                    // ];
-
-                    // SIMD
-                    // let simd_particle_cells = _mm256_set_epi64x(
-                    //     particle_cell[0].to_i64().unwrap(),
-                    //     particle_cell[1].to_i64().unwrap(),
-                    //     particle_cell[2].to_i64().unwrap(),
-                    //     0,
-                    // );
-                    let simd_x_particle_cells: i64x4 = Simd::from([
-                        particle_cell[0].to_i64().unwrap(),
-                        particle_cell[1].to_i64().unwrap(),
-                        particle_cell[2].to_i64().unwrap(),
-                        0,
-                    ]);
-
-                    // union Vec3simd4x64 {
-                    //     x_4x64: [GlobalIndex; 4],
-                    //     x_m256: __m256i,
-                    // }
-                    // union Vec3simd_256_2x128 {
-                    //     x_2xm128: [__m128i; 2],
-                    //     x_m256: __m256i,
-                    // }
-                    // let simd_subtracted = Vec3simd_256_2x128 {
-                    //     x_m256: _mm256_sub_epi64(simd_particle_cells, simd_cube_radius)
-                    // };
-                    //
-                    // let simd_lower = _mm_max_epi64(
-                    //     simd_subtracted.x_2xm128[0],
-                    //     _mm_set1_epi64x(I::zero().to_i64().unwrap()),
-                    //     // _mm256_sub_epi64(simd_particle_cells, simd_cube_radius),
-                    //     // simd_i64_zero,
-                    // );
-
-                    let simd_x_lower: i64x4 = (simd_x_particle_cells - simd_x_cube_radius).simd_max(simd_x_zeros);
-                    let simd_x_upper: i64x4 = (simd_x_particle_cells + simd_x_cube_radius).simd_min(simd_x_extends);
+                // Extract u64 values from simd vectors
+                let lower: [u64; 4];
+                let upper: [u64; 4];
+                unsafe {
+                    lower = std::mem::transmute(simd_lower);
+                    upper = std::mem::transmute(simd_upper);
+                }
 
 
-                    // let simd_lower: __m256i = _mm256_max_epi64(
-                    //     _mm256_sub_epi64(simd_particle_cells, simd_cube_radius),
-                    //     simd_i64_zero,
-                    // );
-                    // let simd_upper: __m256i = _mm256_min_epu64(
-                    //     _mm256_add_epi64(simd_particle_cells, simd_cube_radius),
-                    //     simd_extends,
-                    // );
+                // // Loop over all grid points around the enclosing cell
+                //
+                // Old for Loop
+                // for i in I::range(lower[0], upper[0]).iter() {
+                //     for j in I::range(lower[1], upper[1]).iter() {
+                //         for k in I::range(lower[2], upper[2]).iter() {
+                // New for Loop
+                for i in lower[0]..=upper[0] {
+                    for j in lower[1]..=upper[1] {
+                        for k in lower[2]..=upper[2] {
+
+                            // let point_ijk = [i, j, k];
+                            let point_ijk = [
+                                I::from_u64(i).unwrap(),
+                                I::from_u64(j).unwrap(),
+                                I::from_u64(k).unwrap()
+                            ];
+                            if !mc_grid.point_exists(&point_ijk) {
+                                info!("Panick::Should Exist:: {:?} ... {:?} :~: {:?}", point_ijk, lower, upper);
+                                info!("b1:{}, b2:{}, b3:{}, b4:{}"
+                                    , point_ijk[0] < mc_grid.points_per_dim()[0]
+                                    , point_ijk[1] < mc_grid.points_per_dim()[1]
+                                    , point_ijk[2] < mc_grid.points_per_dim()[2]
+                                    , point_ijk[0] >= I::zero() && point_ijk[1] >= I::zero() && point_ijk[2] >= I::zero()
+                                );
+                            }
 
 
-                    // let lower: [u64; 4] = bytemuck::cast(simd_x_lower);
-                    // let upper: [u64; 4] = bytemuck::cast(simd_x_upper);
-                    // // _mm256_extract_epi64(simd_lower);
+                            let local_point = mc_grid
+                                .get_point(point_ijk)
+                                .expect("point has to be part of the subdomain grid");
+                            //let point_coordinates = mc_grid.point_coordinates(&point);
 
+                            // fn local_to_global_point_ijk<I: Index>(
+                            //     local_point_ijk: [I; 3],
+                            //     subdomain_ijk: [I; 3],
+                            //     cells_per_subdomain: [I; 3],
+                            // ) -> [GlobalIndex; 3] {
+                            //     let local_point_ijk = local_point_ijk
+                            //         .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
+                            //     let subdomain_ijk = subdomain_ijk
+                            //         .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
+                            //     let cells_per_subdomain = cells_per_subdomain
+                            //         .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
+                            //     let [i, j, k] = local_point_ijk;
+                            //
+                            //     [
+                            //         subdomain_ijk[0] * cells_per_subdomain[0] + i,
+                            //         subdomain_ijk[1] * cells_per_subdomain[1] + j,
+                            //         subdomain_ijk[2] * cells_per_subdomain[2] + k,
+                            //     ]
+                            // }
+                            //
+                            // // Use global coordinate calculation for consistency with neighboring domains
+                            // let global_point_ijk = local_to_global_point_ijk(
+                            //     point_ijk,
+                            //     subdomain_ijk.clone(),
+                            //     mc_cells_per_subdomain.clone(),
+                            // );
 
-                    // Loop over all grid points around the enclosing cell
-                    // for i in I::range(lower[0], upper[0]).iter() {
-                    //     for j in I::range(lower[1], upper[1]).iter() {
-                    //         for k in I::range(lower[2], upper[2]).iter() {
-                    //             let local_point = mc_grid
-                    //                 .get_point([i, j, k])
-                    //                 .expect("point has to be part of the subdomain grid");
+                            // Convert subdomain, cells and for loop indices into global point
+                            let global_point_ijk = [
+                                subdomain_ijk[0] * cells_per_subdomain[0] + i,
+                                subdomain_ijk[1] * cells_per_subdomain[1] + j,
+                                subdomain_ijk[2] * cells_per_subdomain[2] + k,
+                            ];
 
+                            let global_point = parameters
+                                .global_marching_cubes_grid
+                                .get_point(global_point_ijk)
+                                .expect("point has to be part of the global mc grid");
+                            let point_coordinates = parameters
+                                .global_marching_cubes_grid
+                                .point_coordinates(&global_point);
 
-                    let lower: [u64; 4] = std::mem::transmute(simd_x_lower);
-                    let upper: [u64; 4] = std::mem::transmute(simd_x_upper);
+                            let dx = p_i - point_coordinates;
+                            let dx_norm_sq = dx.norm_squared();
 
-                    for i in lower[0]..(upper[0] - 1) {
-                        for j in lower[1]..(upper[1] - 1) {
-                            for k in lower[2]..(upper[2] - 1) {
-                                let local_point = mc_grid
-                                    .get_point([
-                                        I::from_u64(i).unwrap(),
-                                        I::from_u64(j).unwrap(),
-                                        I::from_u64(k).unwrap()
-                                    ])
-                                    .expect("point has to be part of the subdomain grid");
+                            if dx_norm_sq < squared_support_with_margin {
+                                let v_i = parameters.particle_rest_mass / rho_i;
+                                let r = dx_norm_sq.sqrt();
+                                let w_ij = kernel.evaluate(r);
+                                //let w_ij = kernel.evaluate(dx_norm_sq);
 
+                                let interpolated_value = v_i * w_ij;
 
-                                // let simd_point_ijk = _mm256_set_epi64x(
-                                //     // Check if this creates loss
-                                //     i as i64,
-                                //     j as i64,
-                                //     k as i64,
-                                //     0,
-                                // );
-                                // let [i, j, k, _] = simd_point_ijk;
-
-                                // let simd_global_point_ijk: Vec3simd4x64 = Vec3simd4x64 {
-                                //     x_m256: _mm256_add_epi64(
-                                //         // Rough and probably wrong assumption that the values will only reside in the lower 32 bit of i64!!!
-                                //         _mm256_mul_epi32(simd_subdomain_ijk, cells_per_subdomain),
-                                //         simd_point_ijk,
-                                //     )
-                                // };
-                                // // let mut v: [i64; 4] = [0, 0, 0, 0];
-                                // // _mm256_storeu_epi64(v.as_mut_ptr(), simd_global_point_ijk);
-                                // // let [x1, x2, x3, _] = v;
-                                // let [x0, x1, x2, _] = simd_global_point_ijk.x_4x64;
-                                // let global_point = parameters
-                                //     .global_marching_cubes_grid
-                                //     .get_point([x0, x1, x2])
-                                //     .expect("point has to be part of the global mc grid");
-
-                                let subdomain_ijk = subdomain_idx.index().clone()
-                                    .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
-                                let cells_per_subdomain = mc_grid.cells_per_dim().clone()
-                                    .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
-
-                                // Use global coordinate calculation for consistency with neighboring domains
-                                let global_point_ijk = [
-                                    (subdomain_ijk[0] * cells_per_subdomain[0] + i),
-                                    (subdomain_ijk[1] * cells_per_subdomain[1] + j),
-                                    (subdomain_ijk[2] * cells_per_subdomain[2] + k),
-                                ];
-                                let global_point = parameters
-                                    .global_marching_cubes_grid
-                                    .get_point(global_point_ijk)
-                                    .expect("point has to be part of the global mc grid");
-                                let point_coordinates = parameters
-                                    .global_marching_cubes_grid
-                                    .point_coordinates(&global_point);
-
-                                let dx = p_i - point_coordinates;
-                                let dx_norm_sq = dx.norm_squared();
-
-                                if dx_norm_sq < squared_support_with_margin {
-                                    let v_i = parameters.particle_rest_mass / rho_i;
-                                    let r = dx_norm_sq.sqrt();
-                                    let w_ij = kernel.evaluate(r);
-                                    //let w_ij = kernel.evaluate(dx_norm_sq);
-
-                                    let interpolated_value = v_i * w_ij;
-
-                                    let flat_point_idx = mc_grid.flatten_point_index(&local_point);
-                                    let flat_point_idx = flat_point_idx.to_usize().unwrap();
-                                    levelset_grid[flat_point_idx] += interpolated_value;
-                                }
-                            }//
-                        }//
-                    }//
+                                let flat_point_idx = mc_grid.flatten_point_index(&local_point);
+                                let flat_point_idx = flat_point_idx.to_usize().unwrap();
+                                levelset_grid[flat_point_idx] += interpolated_value;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1224,151 +1166,117 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
             subdomain_aabb.min(),
             &[parameters.subdomain_cubes; 3],
             parameters.cube_size,
-        ).unwrap();
-        unsafe {
+        )
+            .unwrap();
 
+        levelset_grid.fill(R::zero());
+        levelset_grid.resize(mc_total_points.to_usize().unwrap(), R::zero());
 
-            // let subdomain_ijk =  subdomain_idx.index().map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
-            // let cells_per_subdomain =
-            //     mc_grid.cells_per_dim().map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
-            let [x0, y0, z0] = subdomain_idx.index();
-            // let [x, y, z] = subdomain_idx
-            //     .index()
-            //     .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
-            let simd_subdomain_ijk = _mm256_set_epi64x(
-                // Check if this creates loss
-                x0.to_i64().unwrap(),
-                y0.to_i64().unwrap(),
-                z0.to_i64().unwrap(),
-                0,
-            );
+        index_cache.clear();
 
-            let [x00, y00, z00] = mc_grid.cells_per_dim();
-            let cells_per_subdomain = _mm256_set_epi64x(
-                // Check if this creates loss u64 -> i64
-                x00.to_i64().unwrap(),
-                y00.to_i64().unwrap(),
-                z00.to_i64().unwrap(),
-                0,
-            );
+        {
+            profile!("density grid loop");
 
-            /*
-            let subdomain_ijk = subdomain_idx.index().clone();
-            // .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
-            let cells_per_subdomain = mc_grid.cells_per_dim().clone();
-            // .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
-            */
+            let extents = mc_grid.points_per_dim();
 
-            levelset_grid.fill(R::zero());
-            levelset_grid.resize(mc_total_points.to_usize().unwrap(), R::zero());
-
-            index_cache.clear();
-
+            for (p_i, rho_i) in subdomain_particles
+                .iter()
+                .copied()
+                .zip(subdomain_particle_densities.iter().copied())
             {
-                profile!("density grid loop");
+                // Get grid cell containing particle
+                let particle_cell = mc_grid.enclosing_cell(&p_i);
 
-                let extents = mc_grid.points_per_dim();
+                // Compute lower and upper bounds of the grid points possibly affected by the particle
+                // We want to loop over the vertices of the enclosing cells plus all points in `cube_radius` distance from the cell
 
-                for (p_i, rho_i) in subdomain_particles
-                    .iter()
-                    .zip(subdomain_particle_densities.iter())
-                {
-                    // Get grid cell containing particle
-                    let particle_cell = mc_grid.enclosing_cell(p_i);
+                let lower = [
+                    (particle_cell[0] - cube_radius).max(I::zero()),
+                    (particle_cell[1] - cube_radius).max(I::zero()),
+                    (particle_cell[2] - cube_radius).max(I::zero()),
+                ];
 
-                    // Compute lower and upper bounds of the grid points possibly affected by the particle
-                    // We want to loop over the vertices of the enclosing cells plus all points in `cube_radius` distance from the cell
+                let upper = [
+                    // We add 2 because
+                    //  - we want to loop over all grid points of the cell (+1 for upper points) + the radius
+                    //  - the upper range limit is exclusive (+1)
+                    (particle_cell[0] + cube_radius + I::two()).min(extents[0]),
+                    (particle_cell[1] + cube_radius + I::two()).min(extents[1]),
+                    (particle_cell[2] + cube_radius + I::two()).min(extents[2]),
+                ];
 
-                    let lower = [
-                        (particle_cell[0] - cube_radius).max(I::zero()),
-                        (particle_cell[1] - cube_radius).max(I::zero()),
-                        (particle_cell[2] - cube_radius).max(I::zero()),
-                    ];
+                // Loop over all grid points around the enclosing cell
+                for i in I::range(lower[0], upper[0]).iter() {
+                    for j in I::range(lower[1], upper[1]).iter() {
+                        for k in I::range(lower[2], upper[2]).iter() {
+                            let point_ijk = [i, j, k];
+                            let local_point = mc_grid
+                                .get_point(point_ijk)
+                                .expect("point has to be part of the subdomain grid");
+                            //let point_coordinates = mc_grid.point_coordinates(&point);
 
-                    let upper = [
-                        // We add 2 because
-                        //  - we want to loop over all grid points of the cell (+1 for upper points) + the radius
-                        //  - the upper range limit is exclusive (+1)
-                        (particle_cell[0] + cube_radius + I::two()).min(extents[0]),
-                        (particle_cell[1] + cube_radius + I::two()).min(extents[1]),
-                        (particle_cell[2] + cube_radius + I::two()).min(extents[2]),
-                    ];
+                            let subdomain_ijk = subdomain_idx.index();
+                            let mc_cells_per_subdomain = mc_grid.cells_per_dim();
 
-                    // Loop over all grid points around the enclosing cell
-                    for i in I::range(lower[0], upper[0]).iter() {
-                        for j in I::range(lower[1], upper[1]).iter() {
-                            for k in I::range(lower[2], upper[2]).iter() {
-                                let local_point = mc_grid
-                                    .get_point([i, j, k])
-                                    .expect("point has to be part of the subdomain grid");
+                            fn local_to_global_point_ijk<I: Index>(
+                                local_point_ijk: [I; 3],
+                                subdomain_ijk: [I; 3],
+                                cells_per_subdomain: [I; 3],
+                            ) -> [GlobalIndex; 3] {
+                                let local_point_ijk = local_point_ijk
+                                    .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
+                                let subdomain_ijk = subdomain_ijk
+                                    .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
+                                let cells_per_subdomain = cells_per_subdomain
+                                    .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
+                                let [i, j, k] = local_point_ijk;
 
+                                [
+                                    subdomain_ijk[0] * cells_per_subdomain[0] + i,
+                                    subdomain_ijk[1] * cells_per_subdomain[1] + j,
+                                    subdomain_ijk[2] * cells_per_subdomain[2] + k,
+                                ]
+                            }
 
-                                // SIMD attempt
-                                let simd_point_ijk = _mm256_set_epi64x(
-                                    // Check if this creates loss
-                                    // i.to_i64().unwrap(),
-                                    // j.to_i64().unwrap(),
-                                    // k.to_i64().unwrap(),
-                                    <GlobalIndex as NumCast>::from(i).unwrap() as i64,
-                                    <GlobalIndex as NumCast>::from(j).unwrap() as i64,
-                                    <GlobalIndex as NumCast>::from(k).unwrap() as i64,
-                                    0,
-                                );
+                            // Use global coordinate calculation for consistency with neighboring domains
+                            let global_point_ijk = local_to_global_point_ijk(
+                                point_ijk,
+                                subdomain_ijk.clone(),
+                                mc_cells_per_subdomain.clone(),
+                            );
+                            let global_point = parameters
+                                .global_marching_cubes_grid
+                                .get_point(global_point_ijk)
+                                .expect("point has to be part of the global mc grid");
+                            let point_coordinates = parameters
+                                .global_marching_cubes_grid
+                                .point_coordinates(&global_point);
 
-                                //
-                                // // let [i, j, k, _] = simd_point_ijk;
-                                //
-                                let simd_global_point_ijk = _mm256_add_epi64(
-                                    // Rough and probably wrong assumption that the values will only reside in the lower 32 bit of i64!!!
-                                    _mm256_mul_epi32(simd_subdomain_ijk, cells_per_subdomain),
-                                    simd_point_ijk,
-                                );
+                            let dx = p_i - point_coordinates;
+                            let dx_norm_sq = dx.norm_squared();
 
-                                let mut v: [i64; 4] = [0, 0, 0, 0];
-                                _mm256_storeu_epi64(v.as_mut_ptr(), simd_global_point_ijk);
-                                let [x1, x2, x3, _] = v;
+                            if dx_norm_sq < squared_support_with_margin {
+                                let v_i = parameters.particle_rest_mass / rho_i;
+                                let r = dx_norm_sq.sqrt();
+                                let w_ij = kernel.evaluate(r);
+                                //let w_ij = kernel.evaluate(dx_norm_sq);
 
+                                let interpolated_value = v_i * w_ij;
 
-                                // // Use global coordinate calculation for consistency with neighboring domains
-                                // let global_point_ijk = [
-                                //     (subdomain_ijk[0] * cells_per_subdomain[0] + i).to_u64().unwrap(),
-                                //     (subdomain_ijk[1] * cells_per_subdomain[1] + j).to_u64().unwrap(),
-                                //     (subdomain_ijk[2] * cells_per_subdomain[2] + k).to_u64().unwrap(),
-                                // ];
+                                let flat_point_idx = mc_grid.flatten_point_index(&local_point);
+                                let flat_point_idx = flat_point_idx.to_usize().unwrap();
+                                levelset_grid[flat_point_idx] += interpolated_value;
 
-
-                                let global_point = parameters
-                                    .global_marching_cubes_grid
-                                    .get_point([x1 as u64, x2 as u64, x3 as u64])
-                                    .expect("point has to be part of the global mc grid");
-                                let point_coordinates = parameters
-                                    .global_marching_cubes_grid
-                                    .point_coordinates(&global_point);
-
-                                let dx = *p_i - point_coordinates;
-                                let dx_norm_sq = dx.norm_squared();
-
-                                if dx_norm_sq < squared_support_with_margin {
-                                    let v_i = parameters.particle_rest_mass / *rho_i;
-                                    let r = dx_norm_sq.sqrt();
-                                    let w_ij = kernel.evaluate(r);
-                                    //let w_ij = kernel.evaluate(dx_norm_sq);
-
-                                    let interpolated_value = v_i * w_ij;
-
-                                    let flat_point_idx = mc_grid.flatten_point_index(&local_point);
-                                    let flat_point_idx = flat_point_idx.to_usize().unwrap();
-                                    levelset_grid[flat_point_idx] += interpolated_value;
-
-                                    if levelset_grid[flat_point_idx] > parameters.surface_threshold {
-                                        for c in mc_grid
-                                            .cells_adjacent_to_point(&mc_grid.get_point_neighborhood(&local_point))
-                                            .iter()
-                                            .flatten()
-                                        {
-                                            let flat_cell_index = mc_grid.flatten_cell_index(c);
-                                            index_cache.push(flat_cell_index);
-                                        }
+                                if levelset_grid[flat_point_idx] > parameters.surface_threshold {
+                                    for c in mc_grid
+                                        .cells_adjacent_to_point(
+                                            &mc_grid.get_point_neighborhood(&local_point),
+                                        )
+                                        .iter()
+                                        .flatten()
+                                    {
+                                        let flat_cell_index = mc_grid.flatten_cell_index(c);
+                                        index_cache.push(flat_cell_index);
                                     }
                                 }
                             }
