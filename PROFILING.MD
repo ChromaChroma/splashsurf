@@ -1,7 +1,11 @@
 # Profiling
+
 This document is meant to track measured profiling times, to compare performance of implemented optimizations.
 
-## 0 Measurement
+<details>
+<summary>Measurement 0</summary>
+<details>
+<summary>Single File</summary>
 ### Release mode. Single file
 
 |                  | **Runs**    | **Reconstruction** |
@@ -15,6 +19,7 @@ This document is meant to track measured profiling times, to compare performance
 | **Avg. Runtime** | **106,7ms** | **~23.5ms**        |
 
 Most notable bottlenecks:
+
 ```shell
 reconstruction: 91.37%, 65.09ms avg, 1 call (total: 0.065s)
   subdomain reconstruction (dense): ≈97.79%, 21.56ms avg, 4 calls (total: 0.086s)
@@ -86,12 +91,12 @@ postprocessing: 24.18%, 24.25ms avg, 1 call (total: 0.024s)
 
 ```
 
-
-
 ---
 
+</details>
 
-### Release mode. Multi file
+<details>
+<summary>Multi File</summary>
 
 |                  | **Runs**       |
 |------------------|----------------|
@@ -100,8 +105,8 @@ postprocessing: 24.18%, 24.25ms avg, 1 call (total: 0.024s)
 |                  | 41235.02ms     |
 | **Avg. Runtime** | **41.974,5ms** |
 
-
 Most notable bottlenecks:
+
 ```shell
 reconstruct subcommand: 100.00%, 42283.58ms avg, 1 call (total: 42.284s)
 surface reconstruction: 100.00%, 2748.78ms avg, 235 calls (total: 645.963s)
@@ -110,31 +115,100 @@ surface reconstruction: 100.00%, 2748.78ms avg, 235 calls (total: 645.963s)
   ...
   postprocessing: 51.64%, 1506.30ms avg, 224 calls (total: 337.411s)
 ```
+
 ---
 
+</details>
+</details>
 
-## Optimization 1
-Moved subdomain_ijk and cells_per_subdomain to outside of loop
+
+<details>
+<summary>Measurement 0 (Laptop)</summary>
+<details>
+<summary>Single File</summary>
+
+|                  | **Runs**        |
+|------------------|-----------------|
+|                  | 15022.04ms      |
+|                  | 15594.82ms      |
+|                  | 15769.51ms      |
+|                  | 15429.83ms      |
+|                  | 16277.51ms      |
+| **Avg. Runtime** | **15618,742ms** |
+
+`Most notable bottlenecks:`
+
+```shell 
+reconstruction: 98.46%, 15575.12ms avg, 1 call (total: 15.575s)
+  subdomain reconstruction (dense): ≈99.63%, 4576.07ms avg, 4 calls (total: 18.304s)
+    density grid loop: 92.74%, 4244.01ms avg, 4 calls (total: 16.976s)
+    mc triangulation loop: 7.18%, 328.62ms avg, 4 calls (total: 1.314s)
+```
+
+</details>
+---
+
+<details>
+<summary>Multi File</summary>
 
 |                  | **Runs** |
 |------------------|----------|
-|                  | 23.04ms  |
-|                  | 21.69ms  |
-|                  | 25.33ms  |
 |                  |          |
 |                  |          |
 |                  |          |
-| **Avg. Runtime** | ** **    |
+|                  |          |
+|                  |          |
+|                  |          |
+| **Avg. Runtime** | ** ms**  |
 
 Most notable bottlenecks:
 
+```shell 
+
+```
+
+---
+</details>
+</details>
 
 
-## Optimization n
-What optimized
+
+
+
+
+<details>
+<summary>Optimization 1 (Laptop)</summary>
+Added SIMD in dense surface reconstruction.
+
+<details>
+<summary>Single File</summary>
 
 ### Release mode. Single File
 
+|                  | **Runs**       |
+|------------------|----------------|
+|                  | 172.78ms    |
+|                  | 169.54ms       |
+|                  | 172.38ms       |
+|                  | 174.03ms       |
+|                  | 187.82ms       |
+| **Avg. Runtime** | **175,31ms** |
+
+Most notable bottlenecks:
+
+```shell 
+reconstruction: 86.74%, 121.29ms avg, 1 call (total: 0.121s)
+  subdomain reconstruction (dense): ≈97.75%, 44.66ms avg, 4 calls (total: 0.179s)
+    density grid loop: 58.09%, 25.95ms avg, 4 calls (total: 0.104s)
+    mc triangulation loop: 39.35%, 17.58ms avg, 4 calls (total: 0.070s)
+```
+
+---
+</details>
+
+<details>
+<summary>Multi File</summary>
+
 |                  | **Runs** |
 |------------------|----------|
 |                  |          |
@@ -146,25 +220,19 @@ What optimized
 | **Avg. Runtime** | ** ms**  |
 
 Most notable bottlenecks:
+
 ```shell 
 
 ```
 
 ---
-### Release mode. Multi File
 
-|                  | **Runs** |
-|------------------|----------|
-|                  |          |
-|                  |          |
-|                  |          |
-|                  |          |
-|                  |          |
-|                  |          |
-| **Avg. Runtime** | ** ms**  |
+</detail>
+</details>
 
-Most notable bottlenecks:
-```shell 
 
-```
----
+
+
+
+
+
