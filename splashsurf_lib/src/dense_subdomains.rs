@@ -8,7 +8,7 @@ use num_traits::{FromPrimitive, NumCast};
 use parking_lot::Mutex;
 use rayon::prelude::*;
 use std::cell::RefCell;
-use std::simd::{i64x4, Simd};
+use std::simd::{u64x4, Simd};
 use std::simd::cmp::SimdOrd;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use thread_local::ThreadLocal;
@@ -694,8 +694,8 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
     global_particle_densities: &[R],
     subdomains: &Subdomains<I>,
 ) -> Vec<SurfacePatch<I, R>> {
-    let simd_zeros: i64x4 = i64x4::splat(0);
-    let simd_twos: i64x4 = i64x4::splat(I::two().to_i64().unwrap());
+    let simd_zeros: u64x4 = u64x4::splat(0);
+    let simd_twos: u64x4 = u64x4::splat(I::two().to_u64().unwrap());
 
     profile!(parent, "reconstruction");
 
@@ -705,7 +705,7 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
     // Compute radial distance in terms of grid points we have to evaluate for each particle
     let cube_radius = I::from((parameters.compact_support_radius / parameters.cube_size).ceil())
         .expect("kernel radius in cubes has to fit in index type");
-    let simd_cube_radius: i64x4 = i64x4::splat(cube_radius.to_i64().unwrap());
+    let simd_cube_radius: u64x4 = u64x4::splat(cube_radius.to_u64().unwrap());
     // Kernel
     let kernel = CubicSplineKernel::new(parameters.compact_support_radius);
     //let kernel = DiscreteSquaredDistanceCubicKernel::new::<f64>(1000, parameters.compact_support_radius);
@@ -860,6 +860,7 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
         let cells_per_subdomain = mc_grid.cells_per_dim()
             .clone()
             .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
+        let [cps_i, cps_j, cps_k] = cells_per_subdomain;
 
 
         levelset_grid.fill(R::zero());
@@ -870,10 +871,10 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
 
             // let extents = mc_grid.points_per_dim();
             let [x00, y00, z00] = mc_grid.cells_per_dim();
-            let simd_extends: i64x4 = Simd::from([
-                x00.to_i64().unwrap(),
-                y00.to_i64().unwrap(),
-                z00.to_i64().unwrap(),
+            let simd_extends: u64x4 = Simd::from([
+                x00.to_u64().unwrap(),
+                y00.to_u64().unwrap(),
+                z00.to_u64().unwrap(),
                 0,
             ]);
 
@@ -905,23 +906,20 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
                 //     (particle_cell[1] + cube_radius + I::two()).min(extents[1]),
                 //     (particle_cell[2] + cube_radius + I::two()).min(extents[2]),
                 // ];
-                let simd_particle_cells: i64x4 = Simd::from([
-                    particle_cell[0].to_i64().unwrap(),
-                    particle_cell[1].to_i64().unwrap(),
-                    particle_cell[2].to_i64().unwrap(),
+                let simd_particle_cells: u64x4 = Simd::from([
+                    particle_cell[0].to_u64().unwrap(),
+                    particle_cell[1].to_u64().unwrap(),
+                    particle_cell[2].to_u64().unwrap(),
                     0,
                 ]);
                 //Compute lower and uper bounds through using SIMD
-                let simd_lower: i64x4 = (simd_particle_cells - simd_cube_radius).simd_max(simd_zeros);
-                let simd_upper: i64x4 = (simd_particle_cells + simd_cube_radius + simd_twos).simd_min(simd_extends);
+                let simd_lower: u64x4 = (simd_particle_cells - simd_cube_radius).simd_max(simd_zeros);
+                let simd_upper: u64x4 = (simd_particle_cells + simd_cube_radius + simd_twos).simd_min(simd_extends);
 
                 // Extract u64 values from simd vectors
-                let lower: [u64; 4];
-                let upper: [u64; 4];
-                unsafe {
-                    lower = std::mem::transmute(simd_lower);
-                    upper = std::mem::transmute(simd_upper);
-                }
+                let lower: &[u64; 4] = simd_lower.as_array();
+                let upper: &[u64; 4] = simd_lower.as_array();
+
 
 
                 // // Loop over all grid points around the enclosing cell
@@ -936,24 +934,28 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
                         for k in lower[2]..=upper[2] {
 
                             // let point_ijk = [i, j, k];
-                            let point_ijk = [
-                                I::from_u64(i).unwrap(),
-                                I::from_u64(j).unwrap(),
-                                I::from_u64(k).unwrap()
-                            ];
-                            if !mc_grid.point_exists(&point_ijk) {
-                                info!("Panick::Should Exist:: {:?} ... {:?} :~: {:?}", point_ijk, lower, upper);
-                                info!("b1:{}, b2:{}, b3:{}, b4:{}"
-                                    , point_ijk[0] < mc_grid.points_per_dim()[0]
-                                    , point_ijk[1] < mc_grid.points_per_dim()[1]
-                                    , point_ijk[2] < mc_grid.points_per_dim()[2]
-                                    , point_ijk[0] >= I::zero() && point_ijk[1] >= I::zero() && point_ijk[2] >= I::zero()
-                                );
-                            }
+                            // let point_ijk = [
+                            //     I::from_u64(i).unwrap(),
+                            //     I::from_u64(j).unwrap(),
+                            //     I::from_u64(k).unwrap()
+                            // ];
+                            // if !mc_grid.point_exists(&point_ijk) {
+                            //     info!("Panick::Should Exist:: {:?} ... {:?} :~: {:?}", point_ijk, lower, upper);
+                            //     info!("b1:{}, b2:{}, b3:{}, b4:{}"
+                            //         , point_ijk[0] < mc_grid.points_per_dim()[0]
+                            //         , point_ijk[1] < mc_grid.points_per_dim()[1]
+                            //         , point_ijk[2] < mc_grid.points_per_dim()[2]
+                            //         , point_ijk[0] >= I::zero() && point_ijk[1] >= I::zero() && point_ijk[2] >= I::zero()
+                            //     );
+                            // }
 
 
                             let local_point = mc_grid
-                                .get_point(point_ijk)
+                                .get_point( [
+                                    I::from_u64(i).unwrap(),
+                                    I::from_u64(j).unwrap(),
+                                    I::from_u64(k).unwrap()
+                                ])
                                 .expect("point has to be part of the subdomain grid");
                             //let point_coordinates = mc_grid.point_coordinates(&point);
 
