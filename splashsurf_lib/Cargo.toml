@@ -30,7 +30,10 @@ exclude = [
 ]
 
 [features]
-default = []
+use-installed-tools = ["spirv-builder/use-installed-tools"]
+use-compiled-tools = ["spirv-builder/use-compiled-tools"]
+default = ["use-compiled-tools"]
+#default = []
 vtk_extras = ["vtkio"]
 profiling = ["lazy_static"]
 io = ["vtk_extras", "vtkio", "ply-rs", "nom", "serde_json", "flate2"]
@@ -65,6 +68,30 @@ serde_json = { version = "1.0", optional = true }
 
 # Needed for profiling feature
 lazy_static = { version = "1.4", optional = true }
+
+## GPU OpenGL 3.0
+#opencl3 = "0.9"
+##[dependencies.opencl3]
+##version = "0.9"
+##features = ["CL_VERSION_2_1", "CL_VERSION_2_2", "CL_VERSION_3_0"]
+##features = ["cl_khr_gl_sharing", "cl_khr_dx9_media_sharing", "serde"]
+
+reconstruction = { path = "../shaders/reconstruction", version = "0.1.0", default-features = true }
+
+spirv-builder = "0.9.0"
+
+ash = "0.37"
+ash-window = "0.12"
+raw-window-handle = "0.5.1"
+winit = { version = "0.29.0", features = ["rwh_05"] }
+clap = { version = "4", features = ["derive"] }
+cfg-if = "1.0.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+ash-molten = { version = "0.13.1", features = ["pre-built"] }
+
+
+
 
 [dev-dependencies]
 criterion = "0.5.1"

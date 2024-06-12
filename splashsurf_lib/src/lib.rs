@@ -46,6 +46,7 @@ use crate::marching_cubes::MarchingCubesError;
 use crate::mesh::TriMesh3d;
 use crate::uniform_grid::GridConstructionError;
 use crate::workspace::ReconstructionWorkspace;
+use spirv_builder::{MetadataPrintout, SpirvBuilder};
 
 #[cfg(feature = "profiling")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "profiling")))]
@@ -74,6 +75,7 @@ pub mod uniform_grid;
 #[macro_use]
 mod utils;
 pub(crate) mod workspace;
+mod build;
 
 // TODO: Add documentation of feature flags
 // TODO: Feature flag for multi threading
@@ -287,6 +289,8 @@ pub enum ReconstructionError<I: Index, R: Real> {
     Unknown(#[from] anyhow::Error),
 }
 
+
+
 /// Initializes the global thread pool used by this library with the given parameters.
 ///
 /// Initialization of the global thread pool happens exactly once.
@@ -298,6 +302,7 @@ pub fn initialize_thread_pool(num_threads: usize) -> Result<(), anyhow::Error> {
         .build_global()?;
     Ok(())
 }
+
 
 /// Performs a marching cubes surface construction of the fluid represented by the given particle positions
 #[inline(never)]

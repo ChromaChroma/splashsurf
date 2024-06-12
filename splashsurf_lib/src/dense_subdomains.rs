@@ -860,7 +860,7 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
         let cells_per_subdomain = mc_grid.cells_per_dim()
             .clone()
             .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
-        let [cps_i, cps_j, cps_k] = cells_per_subdomain;
+        // let [cps_i, cps_j, cps_k] = cells_per_subdomain;
 
 
         levelset_grid.fill(R::zero());
@@ -918,7 +918,7 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
 
                 // Extract u64 values from simd vectors
                 let lower: &[u64; 4] = simd_lower.as_array();
-                let upper: &[u64; 4] = simd_lower.as_array();
+                let upper: &[u64; 4] = simd_upper.as_array();
 
 
 
@@ -1002,6 +1002,7 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
                                 .point_coordinates(&global_point);
 
                             let dx = p_i - point_coordinates;
+                            // println!("{:?}\n.. {:?}\n.. {:?}", p_i, point_coordinates, dx);
                             let dx_norm_sq = dx.norm_squared();
 
                             if dx_norm_sq < squared_support_with_margin {

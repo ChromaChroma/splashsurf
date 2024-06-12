@@ -1,5 +1,5 @@
 #! /bin/bash
-cargo run --package splashsurf --bin splashsurf --release \
+cargo run --package splashsurf --bin splashsurf  \
   -- \
   reconstruct ./data/cube_2366_particles.vtk \
   --output-dir ./data/converted \
