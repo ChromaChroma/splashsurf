@@ -4,7 +4,7 @@ resolver = "2"
 members = [
     "splashsurf_lib",
     "splashsurf",
-    "shaders/reconstruction"
+#    "shaders/reconstruction"
 ]
 
 [profile.release]

@@ -46,7 +46,6 @@ use crate::marching_cubes::MarchingCubesError;
 use crate::mesh::TriMesh3d;
 use crate::uniform_grid::GridConstructionError;
 use crate::workspace::ReconstructionWorkspace;
-use spirv_builder::{MetadataPrintout, SpirvBuilder};
 
 #[cfg(feature = "profiling")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "profiling")))]
@@ -310,6 +309,8 @@ pub fn reconstruct_surface<I: Index, R: Real>(
     particle_positions: &[Vector3<R>],
     parameters: &Parameters<R>,
 ) -> Result<SurfaceReconstruction<I, R>, ReconstructionError<I, R>> {
+    print_opencl_info();
+
     let mut surface = SurfaceReconstruction::default();
     reconstruct_surface_inplace(particle_positions, parameters, &mut surface)?;
     Ok(surface)
@@ -439,4 +440,65 @@ pub fn grid_for_reconstruction<I: Index, R: Real>(
     particle_aabb.grow_uniformly(kernel_margin);
 
     Ok(UniformGrid::from_aabb(&particle_aabb, cube_size)?)
+}
+
+use opencl3::device::{device_type_text, vendor_id_text, Device, CL_DEVICE_TYPE_ALL};
+// use opencl3::Result;
+
+/// Finds all the OpenCL platforms and devices on a system.
+///
+/// It displays OpenCL platform information from `clGetPlatformInfo` and
+/// OpenCL device information from `clGetDeviceInfo` for all the platforms and
+/// devices.
+fn print_opencl_info() -> opencl3::Result<()> {
+    let platforms = opencl3::platform::get_platforms()?;
+    println!("Number of platforms: {}", platforms.len());
+
+    for platform in platforms {
+        println!("CL_PLATFORM_VENDOR: {}", platform.vendor()?);
+        println!("CL_PLATFORM_NAME: {}", platform.name()?);
+        println!("CL_PLATFORM_VERSION: {}", platform.version()?);
+        println!("CL_PLATFORM_PROFILE: {}", platform.profile()?);
+        println!("CL_PLATFORM_EXTENSIONS: {}", platform.extensions()?);
+
+        let devices = platform.get_devices(CL_DEVICE_TYPE_ALL)?;
+        println!("Number of devices: {}", devices.len());
+        println!();
+
+        for device_id in devices {
+            let device = Device::new(device_id);
+            println!("\tCL_DEVICE_VENDOR: {}", device.vendor()?);
+            let vendor_id = device.vendor_id()?;
+            println!(
+                "\tCL_DEVICE_VENDOR_ID: {:X}, {}",
+                vendor_id,
+                vendor_id_text(vendor_id)
+            );
+            println!("\tCL_DEVICE_NAME: {}", device.name()?);
+            println!("\tCL_DEVICE_VERSION: {}", device.version()?);
+            let device_type = device.dev_type()?;
+            println!(
+                "\tCL_DEVICE_TYPE: {:X}, {}",
+                device_type,
+                device_type_text(device_type)
+            );
+            println!("\tCL_DEVICE_PROFILE: {}", device.profile()?);
+            println!("\tCL_DEVICE_EXTENSIONS: {}", device.extensions()?);
+            println!(
+                "\tCL_DEVICE_OPENCL_C_VERSION: {:?}",
+                device.opencl_c_version()?
+            );
+            println!(
+                "\tCL_DEVICE_BUILT_IN_KERNELS: {}",
+                device.built_in_kernels()?
+            );
+            println!(
+                "\tCL_DEVICE_SVM_CAPABILITIES: {:X}",
+                device.svm_mem_capability()
+            );
+            println!();
+        }
+    }
+
+    Ok(())
 }
