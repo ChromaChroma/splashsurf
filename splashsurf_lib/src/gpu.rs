@@ -5,7 +5,7 @@ use opencl3::context::Context;
 use opencl3::device::{CL_DEVICE_TYPE_GPU, Device, get_all_devices};
 use opencl3::event::{cl_int, Event};
 use opencl3::kernel::{ExecuteKernel, Kernel};
-use opencl3::memory::{Buffer, CL_MEM_READ_ONLY, CL_MEM_READ_WRITE, CL_MEM_WRITE_ONLY};
+use opencl3::memory::{Buffer, CL_MEM_READ_ONLY, CL_MEM_READ_WRITE, CL_MEM_WRITE_ONLY, ClMem};
 use opencl3::platform::Platform;
 use opencl3::program::{CL_STD_2_0, Program};
 use opencl3::Result;
@@ -378,6 +378,8 @@ pub(crate) fn gpu_img(
     let sd_ijk: Buffer<cl_ulong> = new_queue_buffer(&context, &queue, subdomain_ijk, CL_MEM_READ_ONLY);
     let sp_sd: Buffer<cl_ulong> = new_queue_buffer(&context, &queue, cells_per_subdomain, CL_MEM_READ_ONLY);
     let gmcg_np: Buffer<cl_ulong> = new_queue_buffer(&context, &queue, global_marching_cubes_grid__np, CL_MEM_READ_ONLY);
+
+
     let gmcg_aabb_min: Buffer<cl_double> = new_queue_buffer(&context, &queue, global_marching_cubes_grid__aabb_min, CL_MEM_READ_ONLY);
     let p_i_buffer: Buffer<cl_double> = new_queue_buffer(&context, &queue, p_i, CL_MEM_READ_ONLY);
     let parameters_buffer: Buffer<cl_double> = new_queue_buffer(&context, &queue, parameters, CL_MEM_READ_ONLY);

@@ -1,5 +1,8 @@
+#![allow(warnings)]
+
 use std::cell::RefCell;
 use std::fmt::Debug;
+use std::io::Write;
 use std::ops::Deref;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -26,6 +29,51 @@ use crate::neighborhood_search::{
     neighborhood_search_spatial_hashing_flat_filtered, neighborhood_search_spatial_hashing_parallel,
 };
 use crate::uniform_grid::{EdgeIndex, GridConstructionError, UniformCartesianCubeGrid3d};
+
+fn print_non_zero(values: Vec<cl_double>) {
+    for (i, x) in values.iter().enumerate() {
+        if *x != 0.0 {
+            print!("{}->{} ", i, x);
+        }
+    }
+    println!();
+}
+fn print_nr_of_zero(values: Vec<cl_double>) {
+    println!("NR of Zeroes: {}, Len: {} ",
+             values.clone().into_iter().filter(|x| *x == 0.0).count(),
+             values.clone().len()
+    );
+}
+fn write_non_zero(file: String, values: Vec<f64>) {
+    let mut file = std::fs::File::create(file).expect("fine file");
+    for (i, x) in values.iter().enumerate() {
+        // if i == 1781 {
+        //     print!("{}->{} ", i, x);
+        //     write!(file, "1781::{:?}->{:?}\n", i, x).expect("TODO: panic message1");
+        //
+        // }
+        if *x != 0.0 {
+            write!(file, "{}->{}\n", i, x).expect("TODO: panic message1");
+        }
+    }
+    file.flush().expect("TODO: panic message");
+
+}
+fn write_non_zero_R<R: Real>(values: Vec<R>) {
+    let mut file = std::fs::File::create("log-original.txt").expect("fine file");
+    for (i, x) in values.iter().enumerate() {
+        // if i == 1781 {
+        //     print!("{}->{} ", i, x);
+        //     write!(file, "1781::{:?}->{:?}\n", i, x).expect("TODO: panic message1");
+        //
+        // }
+        if *x != R::zero() {
+        write!(file, "{:?}->{:?}\n", i, x).expect("TODO: panic message1");
+        }
+    }
+    file.flush().expect("TODO: panic message");
+
+}
 
 // TODO: Implement single-threaded processing
 
@@ -693,6 +741,10 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
     global_particle_densities: &[R],
     subdomains: &Subdomains<I>,
 ) -> Vec<SurfacePatch<I, R>> {
+
+
+
+
     profile!(parent, "reconstruction");
 
     let squared_support = parameters.compact_support_radius * parameters.compact_support_radius;
@@ -953,9 +1005,10 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
 
                 }
 
-                let normalization_sigma = 8.0 / (parameters.surface_threshold.to_f64().unwrap()
-                    * parameters.surface_threshold.to_f64().unwrap()
-                    * parameters.surface_threshold.to_f64().unwrap());
+                let normalization_sigma = 8.0 / (parameters.compact_support_radius.to_f64().unwrap()
+                    * parameters.compact_support_radius.to_f64().unwrap()
+                    * parameters.compact_support_radius.to_f64().unwrap());
+
                 let res = gpu::gpu_img(
                     &kernel_data,
                     &levelset_grid_f64,
@@ -978,119 +1031,84 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
                     ],
                 ).expect("TODO: panic message");
 
-                // panic!("PAUSE");
-                // TODO: Check if this is slow or not noticeable
-                //
-                // print_non_zeros(res.clone());
-                //
-                // *levelset_grid = res.into_iter().map(|x| R::from(x).unwrap()).collect();
-                //
-                // print_non_zeros(levelset_grid.clone());
+                levelset_grid_f64 = res;
 
-
-                //
-                // // let np = mc_grid.points_per_dim()
-                // //     .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
-                //
-                //
-                // let normalization_sigma = 8.0 / (parameters.surface_threshold.to_f64().unwrap()
-                //         * parameters.surface_threshold.to_f64().unwrap()
-                //         * parameters.surface_threshold.to_f64().unwrap());
-                //
-                //
-                // let res = gpu::gpu_small_reconstruct(
-                //     &kernel_data,
-                //     levelset_grid_f64.as_slice(),
-                //     to_u64_array(lower),
-                //     to_u64_array(upper),
-                //
-                //     subdomain_ijk,
-                //     cells_per_subdomain,
-                //
-                //     to_u64_array(*mc_grid.points_per_dim()),
-                //
-                //     to_u64_array(*parameters.global_marching_cubes_grid.points_per_dim()),
-                //     to_u64_svec(*parameters.global_marching_cubes_grid.aabb().min()),
-                //     parameters.global_marching_cubes_grid.cell_size().to_f64().unwrap(),
-                //     to_u64_vector3(p_i),
-                //     rho_i.to_f64().unwrap(),
-                //
-                //     [
-                //        squared_support_with_margin.to_f64().unwrap(),
-                //         parameters.particle_rest_mass.to_f64().unwrap(),
-                //         parameters.compact_support_radius.to_f64().unwrap(),
-                //         normalization_sigma,
-                //         parameters.surface_threshold.to_f64().unwrap()
-                //     ]
-                // ).expect("gpu::gpu_small_reconstruct Should have succeeded" );
-                //
-                // // TODO: Check if this is slow or not noticeable
-                // // *levelset_grid = res.into_iter().map(|x| R::from(x).unwrap()).collect();
-                //
-                //
-                //
-                //
                 // Loop over all grid points around the enclosing cell
-                for i in I::range(lower[0], upper[0]).iter() {
-                    for j in I::range(lower[1], upper[1]).iter() {
-                        for k in I::range(lower[2], upper[2]).iter() {
-                            let point_ijk = [i, j, k];
-                            let local_point = mc_grid
-                                .get_point(point_ijk)
-                                .expect("point has to be part of the subdomain grid");
-                            //let point_coordinates = mc_grid.point_coordinates(&point);
-
-
-
-
-
-
-                            let [i, j, k] = point_ijk.map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
-                            // Use global coordinate calculation for consistency with neighboring domains
-                            let global_point_ijk = [
-                                subdomain_ijk[0] * cells_per_subdomain[0] + i,
-                                subdomain_ijk[1] * cells_per_subdomain[1] + j,
-                                subdomain_ijk[2] * cells_per_subdomain[2] + k,
-                            ];
-                            let global_point = parameters
-                                .global_marching_cubes_grid
-                                .get_point(global_point_ijk)
-                                .expect("point has to be part of the global mc grid");
-                            let point_coordinates = parameters
-                                .global_marching_cubes_grid
-                                .point_coordinates(&global_point);
-
-                            let dx = p_i - point_coordinates;
-                            let dx_norm_sq = dx.norm_squared();
-
-                            if dx_norm_sq < squared_support_with_margin {
-                                let v_i = parameters.particle_rest_mass / rho_i;
-                                let r = dx_norm_sq.sqrt();
-                                let w_ij = kernel.evaluate(r);
-                                //let w_ij = kernel.evaluate(dx_norm_sq);
-
-                                let interpolated_value = v_i * w_ij;
-
-                                let flat_point_idx = mc_grid.flatten_point_index(&local_point);
-                                let flat_point_idx = flat_point_idx.to_usize().unwrap();
-                                levelset_grid[flat_point_idx] += interpolated_value;
-
-                            }
-                        }
-                    }
-                }
-                // let mut lsg_vec = Vec::default();
-                // for (x, y) in levelset_grid.iter().zip(res) {
-                //     if *x >R::zero() || y > 0.0 {
-                //         lsg_vec.push((x, y))
+                // println!("::Original Loop::");
+                // for i in I::range(lower[0], upper[0]).iter() {
+                //     for j in I::range(lower[1], upper[1]).iter() {
+                //         for k in I::range(lower[2], upper[2]).iter() {
+                //             let point_ijk = [i, j, k];
+                //             let local_point = mc_grid
+                //                 .get_point(point_ijk)
+                //                 .expect("point has to be part of the subdomain grid");
+                //             //let point_coordinates = mc_grid.point_coordinates(&point);
+                //
+                //             // let flat_idx = i * mc_grid.points_per_dim()[0] * mc_grid.points_per_dim()[2] + j * mc_grid.points_per_dim()[2]* k;
+                //             // println!("  ::{:?}->{:?}", res[flat_idx.to_usize().unwrap()], local_point.index()[0]);
+                //
+                //
+                //
+                //             let [i, j, k] = point_ijk.map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
+                //             // Use global coordinate calculation for consistency with neighboring domains
+                //             let global_point_ijk = [
+                //                 subdomain_ijk[0] * cells_per_subdomain[0] + i,
+                //                 subdomain_ijk[1] * cells_per_subdomain[1] + j,
+                //                 subdomain_ijk[2] * cells_per_subdomain[2] + k,
+                //             ];
+                //             let global_point = parameters
+                //                 .global_marching_cubes_grid
+                //                 .get_point(global_point_ijk)
+                //                 .expect("point has to be part of the global mc grid");
+                //             let point_coordinates = parameters
+                //                 .global_marching_cubes_grid
+                //                 .point_coordinates(&global_point);
+                //
+                //             let dx = p_i - point_coordinates;
+                //
+                //
+                //
+                //
+                //             let dx_norm_sq = dx.norm_squared();
+                //
+                //
+                //             if dx_norm_sq < squared_support_with_margin {
+                //                 let v_i = parameters.particle_rest_mass / rho_i;
+                //                 let r = dx_norm_sq.sqrt();
+                //
+                //                 let w_ij = kernel.evaluate(r);
+                //
+                //                 let interpolated_value = v_i * w_ij;
+                //
+                //                 let flat_point_idx = mc_grid.flatten_point_index(&local_point);
+                //                 let flat_point_idx = flat_point_idx.to_usize().unwrap();
+                //                 levelset_grid[flat_point_idx] += interpolated_value;
+                //
+                //
+                //                 // if flat_point_idx == 1781 {
+                //                 //     println!("Original({:?}): {:?} {:?} (With  {:?}) (dV:{:?})(V:{:?})",
+                //                 //              flat_point_idx, lower, upper, local_point,
+                //                 //              interpolated_value, levelset_grid[flat_point_idx]);
+                //                 // }
+                //
+                //                 // if levelset_grid[flat_point_idx] > R::zero() {
+                //                 //     println!("{:?} {:?} {:?} idx: {} :: {} (with{})-> {}",
+                //                 //              local_point, global_point, point_coordinates,
+                //                 //              flat_point_idx, levelset_grid[flat_point_idx], interpolated_value,  res[flat_point_idx]);
+                //                 // }
+                //
+                //             }
+                //         }
                 //     }
                 // }
-                // println!("{:?}", lsg_vec);
-                //
-                // // let lsg2 = res.into_iter().filter(|x| *x > 0.0);
-                // // println!("{:?}", lsg2);
-                // panic!("arggggg")
             }
+            *levelset_grid = levelset_grid_f64.clone().into_iter().map(|x| R::from(x).unwrap()).collect();
+
+            write_non_zero("log.txt".to_string(), levelset_grid_f64.clone());
+            write_non_zero_R(levelset_grid.clone());
+
+            // print_non_zero(levelset_grid_f64.clone());
+            // print_nr_of_zero(levelset_grid_f64.clone());
         }
 
         let mut vertices = Vec::new();
@@ -1485,6 +1503,7 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
 
     surface_patches
 }
+
 
 pub(crate) fn stitching<I: Index, R: Real>(
     surface_patches: Vec<SurfacePatch<I, R>>,
