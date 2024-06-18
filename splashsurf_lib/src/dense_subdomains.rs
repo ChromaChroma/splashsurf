@@ -1,3 +1,8 @@
+use std::cell::RefCell;
+use std::fmt::Debug;
+use std::ops::Deref;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use anyhow::{anyhow, Context};
 use arrayvec::ArrayVec;
 use itertools::Itertools;
@@ -5,24 +10,22 @@ use log::{info, trace};
 use nalgebra::{SVector, Vector3};
 use num_integer::Integer;
 use num_traits::{FromPrimitive, NumCast};
+use opencl3::types::cl_double;
 use parking_lot::Mutex;
 use rayon::prelude::*;
-use std::cell::RefCell;
-use std::ops::Deref;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use thread_local::ThreadLocal;
 
+use crate::{Aabb3d, gpu, MapType, new_map, new_parallel_map, Parameters, profile, SpatialDecomposition, SurfaceReconstruction};
+use crate::{Index, Real};
 use crate::density_map::sequential_compute_particle_densities_filtered;
 use crate::kernel::{CubicSplineKernel, SymmetricKernel3d};
 use crate::marching_cubes::marching_cubes_lut::marching_cubes_triangulation_iter;
 use crate::mesh::{HexMesh3d, TriMesh3d};
 use crate::neighborhood_search::{
-    neighborhood_search_spatial_hashing_flat_filtered,
-    neighborhood_search_spatial_hashing_parallel, FlatNeighborhoodList,
+    FlatNeighborhoodList,
+    neighborhood_search_spatial_hashing_flat_filtered, neighborhood_search_spatial_hashing_parallel,
 };
 use crate::uniform_grid::{EdgeIndex, GridConstructionError, UniformCartesianCubeGrid3d};
-use crate::{new_map, new_parallel_map, profile, Aabb3d, MapType, Parameters, SpatialDecomposition, SurfaceReconstruction, gpu};
-use crate::{Index, Real};
 
 // TODO: Implement single-threaded processing
 
@@ -690,8 +693,6 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
     global_particle_densities: &[R],
     subdomains: &Subdomains<I>,
 ) -> Vec<SurfacePatch<I, R>> {
-
-
     profile!(parent, "reconstruction");
 
     let squared_support = parameters.compact_support_radius * parameters.compact_support_radius;
@@ -877,8 +878,8 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
         levelset_grid.resize(mc_total_points.to_usize().unwrap(), R::zero());
 
 
-        fn to_u64_svec<R : Real, const N : usize>(svec : SVector<R, N>) -> [f64; N] {
-            let arr : [R; N] = svec.as_slice()[0..N].try_into().unwrap();
+        fn to_u64_svec<R: Real, const N: usize>(svec: SVector<R, N>) -> [f64; N] {
+            let arr: [R; N] = svec.as_slice()[0..N].try_into().unwrap();
             arr.map(|i| i.to_f64().unwrap())
         }
 
@@ -898,8 +899,6 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
                 .copied()
                 .zip(subdomain_particle_densities.iter().copied())
             {
-
-
 
 
                 // Get grid cell containing particle
@@ -923,14 +922,16 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
                     (particle_cell[2] + cube_radius + I::two()).min(extents[2]),
                 ];
 
-                fn to_u64_array<I : Index, const N : usize>(arr : [I; N]) -> [u64; N] {
+
+
+                fn to_u64_array<I: Index, const N: usize>(arr: [I; N]) -> [u64; N] {
                     arr.map(|i| i.to_u64().unwrap())
                 }
-                fn to_u64_svec<R : Real, const N : usize>(svec : SVector<R, N>) -> [f64; N] {
-                    let arr : [R; N] = svec.as_slice()[0..N].try_into().unwrap();
+                fn to_u64_svec<R: Real, const N: usize>(svec: SVector<R, N>) -> [f64; N] {
+                    let arr: [R; N] = svec.as_slice()[0..N].try_into().unwrap();
                     arr.map(|i| i.to_f64().unwrap())
                 }
-                fn to_u64_vector3<R : Real>(vec : Vector3<R>) -> [f64; 3] {
+                fn to_u64_vector3<R: Real>(vec: Vector3<R>) -> [f64; 3] {
                     [
                         vec.x.clone().to_f64().unwrap(),
                         vec.y.clone().to_f64().unwrap(),
@@ -938,96 +939,157 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
                     ]
                 }
 
-                // let np = mc_grid.points_per_dim()
-                //     .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
+                fn print_non_zeros<T: Real>(results: Vec<T>) {
+                    let mut lsg_vec = Vec::default();
+                    for x in results.iter() {
+                        if *x > T::zero() {
+                            lsg_vec.push(x)
+                        }
+                    }
+                    let l = lsg_vec.len();
+                    for (i, x) in lsg_vec.into_iter().enumerate() {
+                        println!("{} Val:: {:?}->{:?}", l, i, x, );
+                    }
 
+                }
 
                 let normalization_sigma = 8.0 / (parameters.surface_threshold.to_f64().unwrap()
-                        * parameters.surface_threshold.to_f64().unwrap()
-                        * parameters.surface_threshold.to_f64().unwrap());
-
-                let res = gpu::gpu_small_reconstruct(
+                    * parameters.surface_threshold.to_f64().unwrap()
+                    * parameters.surface_threshold.to_f64().unwrap());
+                let res = gpu::gpu_img(
                     &kernel_data,
-                    levelset_grid_f64.as_slice(),
+                    &levelset_grid_f64,
                     to_u64_array(lower),
                     to_u64_array(upper),
-
+                    to_u64_array(*mc_grid.points_per_dim()),
                     subdomain_ijk,
                     cells_per_subdomain,
-
-                    to_u64_array(*mc_grid.points_per_dim()),
-
                     to_u64_array(*parameters.global_marching_cubes_grid.points_per_dim()),
                     to_u64_svec(*parameters.global_marching_cubes_grid.aabb().min()),
                     parameters.global_marching_cubes_grid.cell_size().to_f64().unwrap(),
                     to_u64_vector3(p_i),
                     rho_i.to_f64().unwrap(),
-
                     [
-                       squared_support_with_margin.to_f64().unwrap(),
+                        squared_support_with_margin.to_f64().unwrap(),
                         parameters.particle_rest_mass.to_f64().unwrap(),
                         parameters.compact_support_radius.to_f64().unwrap(),
                         normalization_sigma,
                         parameters.surface_threshold.to_f64().unwrap()
+                    ],
+                ).expect("TODO: panic message");
 
-                    ]
-
-                ).expect("gpu::gpu_small_reconstruct Should have succeeded" );
-
+                // panic!("PAUSE");
                 // TODO: Check if this is slow or not noticeable
-                *levelset_grid = res.into_iter().map(|x| R::from(x).unwrap()).collect();
+                //
+                // print_non_zeros(res.clone());
+                //
+                // *levelset_grid = res.into_iter().map(|x| R::from(x).unwrap()).collect();
+                //
+                // print_non_zeros(levelset_grid.clone());
+
+
+                //
+                // // let np = mc_grid.points_per_dim()
+                // //     .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
+                //
+                //
+                // let normalization_sigma = 8.0 / (parameters.surface_threshold.to_f64().unwrap()
+                //         * parameters.surface_threshold.to_f64().unwrap()
+                //         * parameters.surface_threshold.to_f64().unwrap());
+                //
+                //
+                // let res = gpu::gpu_small_reconstruct(
+                //     &kernel_data,
+                //     levelset_grid_f64.as_slice(),
+                //     to_u64_array(lower),
+                //     to_u64_array(upper),
+                //
+                //     subdomain_ijk,
+                //     cells_per_subdomain,
+                //
+                //     to_u64_array(*mc_grid.points_per_dim()),
+                //
+                //     to_u64_array(*parameters.global_marching_cubes_grid.points_per_dim()),
+                //     to_u64_svec(*parameters.global_marching_cubes_grid.aabb().min()),
+                //     parameters.global_marching_cubes_grid.cell_size().to_f64().unwrap(),
+                //     to_u64_vector3(p_i),
+                //     rho_i.to_f64().unwrap(),
+                //
+                //     [
+                //        squared_support_with_margin.to_f64().unwrap(),
+                //         parameters.particle_rest_mass.to_f64().unwrap(),
+                //         parameters.compact_support_radius.to_f64().unwrap(),
+                //         normalization_sigma,
+                //         parameters.surface_threshold.to_f64().unwrap()
+                //     ]
+                // ).expect("gpu::gpu_small_reconstruct Should have succeeded" );
+                //
+                // // TODO: Check if this is slow or not noticeable
+                // // *levelset_grid = res.into_iter().map(|x| R::from(x).unwrap()).collect();
+                //
+                //
+                //
+                //
+                // Loop over all grid points around the enclosing cell
+                for i in I::range(lower[0], upper[0]).iter() {
+                    for j in I::range(lower[1], upper[1]).iter() {
+                        for k in I::range(lower[2], upper[2]).iter() {
+                            let point_ijk = [i, j, k];
+                            let local_point = mc_grid
+                                .get_point(point_ijk)
+                                .expect("point has to be part of the subdomain grid");
+                            //let point_coordinates = mc_grid.point_coordinates(&point);
 
 
 
 
-                // // Loop over all grid points around the enclosing cell
-                // for i in I::range(lower[0], upper[0]).iter() {
-                //     for j in I::range(lower[1], upper[1]).iter() {
-                //         for k in I::range(lower[2], upper[2]).iter() {
-                //             let point_ijk = [i, j, k];
-                //             let local_point = mc_grid
-                //                 .get_point(point_ijk)
-                //                 .expect("point has to be part of the subdomain grid");
-                //             //let point_coordinates = mc_grid.point_coordinates(&point);
-                //
-                //
-                //
-                //
-                //
-                //
-                //             let [i, j, k] = point_ijk.map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
-                //             // Use global coordinate calculation for consistency with neighboring domains
-                //             let global_point_ijk = [
-                //                 subdomain_ijk[0] * cells_per_subdomain[0] + i,
-                //                 subdomain_ijk[1] * cells_per_subdomain[1] + j,
-                //                 subdomain_ijk[2] * cells_per_subdomain[2] + k,
-                //             ];
-                //             let global_point = parameters
-                //                 .global_marching_cubes_grid
-                //                 .get_point(global_point_ijk)
-                //                 .expect("point has to be part of the global mc grid");
-                //             let point_coordinates = parameters
-                //                 .global_marching_cubes_grid
-                //                 .point_coordinates(&global_point);
-                //
-                //             let dx = p_i - point_coordinates;
-                //             let dx_norm_sq = dx.norm_squared();
-                //
-                //             if dx_norm_sq < squared_support_with_margin {
-                //                 let v_i = parameters.particle_rest_mass / rho_i;
-                //                 let r = dx_norm_sq.sqrt();
-                //                 let w_ij = kernel.evaluate(r);
-                //                 //let w_ij = kernel.evaluate(dx_norm_sq);
-                //
-                //                 let interpolated_value = v_i * w_ij;
-                //
-                //                 let flat_point_idx = mc_grid.flatten_point_index(&local_point);
-                //                 let flat_point_idx = flat_point_idx.to_usize().unwrap();
-                //                 levelset_grid[flat_point_idx] += interpolated_value;
-                //             }
-                //         }
+
+
+                            let [i, j, k] = point_ijk.map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
+                            // Use global coordinate calculation for consistency with neighboring domains
+                            let global_point_ijk = [
+                                subdomain_ijk[0] * cells_per_subdomain[0] + i,
+                                subdomain_ijk[1] * cells_per_subdomain[1] + j,
+                                subdomain_ijk[2] * cells_per_subdomain[2] + k,
+                            ];
+                            let global_point = parameters
+                                .global_marching_cubes_grid
+                                .get_point(global_point_ijk)
+                                .expect("point has to be part of the global mc grid");
+                            let point_coordinates = parameters
+                                .global_marching_cubes_grid
+                                .point_coordinates(&global_point);
+
+                            let dx = p_i - point_coordinates;
+                            let dx_norm_sq = dx.norm_squared();
+
+                            if dx_norm_sq < squared_support_with_margin {
+                                let v_i = parameters.particle_rest_mass / rho_i;
+                                let r = dx_norm_sq.sqrt();
+                                let w_ij = kernel.evaluate(r);
+                                //let w_ij = kernel.evaluate(dx_norm_sq);
+
+                                let interpolated_value = v_i * w_ij;
+
+                                let flat_point_idx = mc_grid.flatten_point_index(&local_point);
+                                let flat_point_idx = flat_point_idx.to_usize().unwrap();
+                                levelset_grid[flat_point_idx] += interpolated_value;
+
+                            }
+                        }
+                    }
+                }
+                // let mut lsg_vec = Vec::default();
+                // for (x, y) in levelset_grid.iter().zip(res) {
+                //     if *x >R::zero() || y > 0.0 {
+                //         lsg_vec.push((x, y))
                 //     }
                 // }
+                // println!("{:?}", lsg_vec);
+                //
+                // // let lsg2 = res.into_iter().filter(|x| *x > 0.0);
+                // // println!("{:?}", lsg2);
+                // panic!("arggggg")
             }
         }
 
