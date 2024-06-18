@@ -76,8 +76,9 @@ __kernel void reconstruct(
 
     // // norm squared
     // //TODO remove dotc().simdreal() and code it in CL code
-    // float dx_norm_sq = dx.dotc(&dx).simd_real()
-    float dx_norm_sq = 1.0;
+    // float dx_norm_sq = dx.dotc(&dx)
+
+    float dx_norm_sq = dot(&dx, &dx);
 
     // if dx_norm_sq < squared_support_with_margin (parameters[0])
     if (dx_norm_sq < parameters[0]) {
