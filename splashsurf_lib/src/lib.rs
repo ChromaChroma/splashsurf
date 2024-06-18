@@ -47,6 +47,8 @@ use crate::mesh::TriMesh3d;
 use crate::uniform_grid::GridConstructionError;
 use crate::workspace::ReconstructionWorkspace;
 
+mod gpu;
+
 #[cfg(feature = "profiling")]
 #[cfg_attr(doc_cfg, doc(cfg(feature = "profiling")))]
 pub mod profiling;
@@ -309,7 +311,6 @@ pub fn reconstruct_surface<I: Index, R: Real>(
     particle_positions: &[Vector3<R>],
     parameters: &Parameters<R>,
 ) -> Result<SurfaceReconstruction<I, R>, ReconstructionError<I, R>> {
-    print_opencl_info();
 
     let mut surface = SurfaceReconstruction::default();
     reconstruct_surface_inplace(particle_positions, parameters, &mut surface)?;
