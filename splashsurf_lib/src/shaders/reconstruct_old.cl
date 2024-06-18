@@ -1,5 +1,27 @@
 #define CL_M_PI 3.141592653589793115998
 
+
+__kernel void reconstruct_dense2(
+    global int* output,
+    global int* np,
+    int delta_y,
+    int delta_z,
+)
+{
+    const size_t x = get_global_id(0);
+    const size_t y = get_global_id(1);
+    const size_t z = get_global_id(1);
+
+    if ( x >= np[0] ||  y >= np[1] ||  z >= np[2] || x < 0 || y < 0 || z < 0) {
+    return;
+  }
+
+    output[x + delta_y * (y + delta_z * z)] = x + y + z;
+}
+
+
+
+
 // Should be ran for range in lower to upper 3d range, (+ lower as value where
 // is added on)
 __kernel void reconstruct_dense(
