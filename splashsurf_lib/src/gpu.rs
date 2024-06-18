@@ -22,14 +22,11 @@ pub struct KernelData {
 
 
 pub(crate) fn init_kernel() -> Result<KernelData> {
-    // let shaders_code = include_str!("shaders/reconstruct.cl");
-    // const KERNEL_NAME2: &str = "reconstruct";
     let shaders_code = include_str!("shaders/shaders.cl");
-    const KERNEL_NAME2: &str = "saxpy_float";
+    const KERNEL_NAME: &str = "reconstruct";
 
     let platforms = opencl3::platform::get_platforms()?;
-    let platform = platforms.first()
-        .expect("No OpenCL platforms found.");
+    let platform = platforms.first().expect("No OpenCL platforms found.");
     let device = *platform
         .get_devices(CL_DEVICE_TYPE_GPU)?
         .first()
@@ -39,18 +36,17 @@ pub(crate) fn init_kernel() -> Result<KernelData> {
     // Create a Context on an OpenCL device
     let context = Context::from_device(&device).expect("Context::from_device failed");
 
-
     // Build the OpenCL program source and create the kernel.
     let program = Program::create_and_build_from_source(&context, shaders_code, CL_STD_2_0)
         .expect("Program::create_and_build_from_source failed");
-    let kernel = Kernel::create(&program, KERNEL_NAME2).expect("Kernel::create failed");
+    let kernel = Kernel::create(&program, KERNEL_NAME).expect("Kernel::create failed");
 
     Ok(KernelData {
         platform: *platform,
-        device: device,
-        context: context,
-        program: program,
-        kernel: kernel,
+        device,
+        context,
+        program,
+        kernel,
     })
 }
 
@@ -221,35 +217,12 @@ pub(crate) fn gpu_small_reconstruct(
 
     ////////////////
     // Compute data
-    let mut delta_workgroup_sizes: [usize; 3] = usize_diff(lower, upper);
 
     // let output_size: usize = delta_workgroup_sizes[0] * delta_workgroup_sizes[1] * delta_workgroup_sizes[2];
     let output_size: usize = levelset_grid_f64.len();
-
-    let mut output_buffer = unsafe {
-        Buffer::<cl_double>::create(&context, CL_MEM_WRITE_ONLY, output_size, ptr::null_mut())?
-    };
-
-    fn convert_slice_to_cl_double(input: &[f64]) -> Box<[cl_double]> {
-        let output: Vec<cl_double> = input.iter().map(|&x| x as cl_double).collect();
-        output.into_boxed_slice()
-    }
-
-    // let levelset_grid_f64_arr1: [f64] = *levelset_grid_f64;
     let levelset_grid_f64_arr: &[cl_double] = &*convert_slice_to_cl_double(levelset_grid_f64);
-
-    // levelset_grid_f64.into_iter()
-    // .map(|x| *x as cl_double)
-    // // .collect();
-    // .collect::<Vec<cl_double>>()
-    // .try_into()
-    // .unwrap();
-
-    let _output_buffer_write_event = unsafe {
-        queue.enqueue_write_buffer(&mut output_buffer, CL_BLOCKING, 0,
-                                   &levelset_grid_f64_arr,
-                                   &[])?
-    };
+    let mut output_buffer = unsafe {Buffer::<cl_double>::create(&context, CL_MEM_WRITE_ONLY, output_size, ptr::null_mut())? };
+    let _output_buffer_write_event = unsafe {  queue.enqueue_write_buffer(&mut output_buffer, CL_BLOCKING, 0,  &levelset_grid_f64_arr, &[])? };
 
 
     // Create OpenCL device buffers
@@ -279,6 +252,8 @@ pub(crate) fn gpu_small_reconstruct(
     let mut parameters_buffer = unsafe { Buffer::<cl_double>::create(&context, CL_MEM_READ_ONLY, 5, ptr::null_mut())? };
     let _parameters_event = unsafe { queue.enqueue_write_buffer(&mut parameters_buffer, CL_BLOCKING, 0, &parameters.map(|x| x as cl_double), &[])? };
 
+
+    let mut delta_workgroup_sizes: [usize; 3] = usize_diff(lower, upper);
 
     let kernel_event = unsafe {
         ExecuteKernel::new(&kernel)
@@ -358,15 +333,10 @@ fn new_queue_buffer<D: From<T>, T, const N: usize>(context: &Context, queue: &Co
     return buffer;
 }
 
-
-const PROGRAM_SOURCE: &str = r#"
-kernel void saxpy_float (global float* z)
-{
-    const size_t i = get_global_id(0);
-    z[i] = i;
-}"#;
-
-const KERNEL_NAME: &str = "saxpy_float";
+fn convert_slice_to_cl_double(input: &[f64]) -> Box<[cl_double]> {
+    let output: Vec<cl_double> = input.iter().map(|&x| x as cl_double).collect();
+    output.into_boxed_slice()
+}
 
 pub(crate) fn gpu_img(
     kernel_data: &KernelData,
@@ -393,41 +363,16 @@ pub(crate) fn gpu_img(
     /////////////////////////////////////////////////////////////////////
     // Compute data
 
+
     let output_size: usize = levelset_grid_f64.len();
 
-    let mut output_buffer = unsafe { Buffer::<cl_double>::create(&context, CL_MEM_READ_WRITE, output_size, ptr::null_mut())? };
 
-    fn convert_slice_to_cl_double(input: &[f64]) -> Box<[cl_double]> {
-        let output: Vec<cl_double> = input.iter().map(|&x| x as cl_double).collect();
-        output.into_boxed_slice()
-    }
+    // Output Buffers
     let levelset_grid_f64_arr: &[cl_double] = &*convert_slice_to_cl_double(levelset_grid_f64);
+    let mut output_buffer = unsafe { Buffer::<cl_double>::create(&context, CL_MEM_READ_WRITE, output_size, ptr::null_mut())? };
     let _output_buffer_write_event = unsafe { queue.enqueue_write_buffer(&mut output_buffer, CL_BLOCKING, 0, &levelset_grid_f64_arr, &[])? };
 
-
-    let delta_workgroup_sizes: [usize; 3] = usize_diff(lower, upper);
-
-    // let mut x_np = unsafe { Buffer::<cl_ulong>::create(&context, CL_MEM_READ_ONLY, 3, ptr::null_mut())? };
-    // let _x_write_event = unsafe { queue.enqueue_write_buffer(&mut x_np, CL_BLOCKING, 0, &n_points_per_dim.map(|x| x as cl_ulong), &[])? };
-    //
-    // let mut sd_ijk = unsafe { Buffer::<cl_ulong>::create(&context, CL_MEM_READ_ONLY, 3, ptr::null_mut())? };
-    // let _sd_ijk_write_event = unsafe { queue.enqueue_write_buffer(&mut sd_ijk, CL_BLOCKING, 0, &subdomain_ijk.map(|x| x as cl_ulong), &[])? };
-    //
-    // let mut sp_sd = unsafe { Buffer::<cl_ulong>::create(&context, CL_MEM_READ_ONLY, 3, ptr::null_mut())? };
-    // let _csp_sd_write_event = unsafe { queue.enqueue_write_buffer(&mut sp_sd, CL_BLOCKING, 0, &cells_per_subdomain.map(|x| x as cl_ulong), &[])? };
-    //
-    // let mut gmcg_np = unsafe { Buffer::<cl_ulong>::create(&context, CL_MEM_READ_ONLY, 3, ptr::null_mut())? };
-    // let _gmcg__np_event = unsafe { queue.enqueue_write_buffer(&mut gmcg_np, CL_BLOCKING, 0, &global_marching_cubes_grid__np.map(|x| x as cl_ulong), &[])? };
-    //
-    // let mut gmcg_aabb_min = unsafe { Buffer::<cl_double>::create(&context, CL_MEM_READ_ONLY, 3, ptr::null_mut())? };
-    // let _gmcg_aabb_min_event = unsafe { queue.enqueue_write_buffer(&mut gmcg_aabb_min, CL_BLOCKING, 0, &global_marching_cubes_grid__aabb_min.map(|x| x as cl_double), &[])? };
-    //
-    // let mut p_i_buffer = unsafe { Buffer::<cl_double>::create(&context, CL_MEM_READ_ONLY, 3, ptr::null_mut())? };
-    // let _p_i_event = unsafe { queue.enqueue_write_buffer(&mut p_i_buffer, CL_BLOCKING, 0, &p_i.map(|x| x as cl_double), &[])? };
-    //
-    // let mut parameters_buffer = unsafe { Buffer::<cl_double>::create(&context, CL_MEM_READ_ONLY, 5, ptr::null_mut())? };
-    // let _parameters_event = unsafe { queue.enqueue_write_buffer(&mut parameters_buffer, CL_BLOCKING, 0, &parameters.map(|x| x as cl_double), &[])? };
-
+    // Input Argument Buffers
     let lower_buffer: Buffer<cl_ulong> = new_queue_buffer(&context, &queue, lower, CL_MEM_READ_ONLY);
     let x_np: Buffer<cl_ulong> = new_queue_buffer(&context, &queue, n_points_per_dim, CL_MEM_READ_ONLY);
     let sd_ijk: Buffer<cl_ulong> = new_queue_buffer(&context, &queue, subdomain_ijk, CL_MEM_READ_ONLY);
@@ -437,6 +382,7 @@ pub(crate) fn gpu_img(
     let p_i_buffer: Buffer<cl_double> = new_queue_buffer(&context, &queue, p_i, CL_MEM_READ_ONLY);
     let parameters_buffer: Buffer<cl_double> = new_queue_buffer(&context, &queue, parameters, CL_MEM_READ_ONLY);
 
+    let delta_workgroup_sizes: [usize; 3] = usize_diff(lower, upper);
 
     // Use the ExecuteKernel builder to set the kernel buffer and
     // cl_float value arguments, before setting the one dimensional
@@ -465,36 +411,12 @@ pub(crate) fn gpu_img(
     // Create a results array to hold the results from the OpenCL device
     // and enqueue a read command to read the device buffer into the array
     // after the kernel event completes.
-    // let mut results: [cl_double; output_size] = [0.0; output_size];
+    let mut results = &mut vec![0 as cl_double; output_size];
 
-    let mut results: &mut [cl_double] = &mut *convert_slice_to_cl_double(levelset_grid_f64.clone());
-
-    let read_event =
-        unsafe { queue.enqueue_read_buffer(&output_buffer, CL_NON_BLOCKING, 0, &mut results, &events)? };
+    let read_event = unsafe { queue.enqueue_read_buffer(&output_buffer, CL_NON_BLOCKING, 0, &mut results, &events)? };
 
     // Wait for the read_event to complete.
     read_event.wait()?;
-
-    //
-    // let mut lsg_vec = Vec::default();
-    // for x in results.iter() {
-    //     if *x > 0.0 {
-    //         lsg_vec.push(x)
-    //     }
-    // }
-    // let l = lsg_vec.len();
-    // for (i, x) in lsg_vec.into_iter().enumerate() {
-    //     println!("{} Val:: {:?}->{:?}", l, i, x, );
-    // }
-    //
-    // // Output the first and last results
-    // println!("results size: {}, Workgroup: {:?}, Lower: {:?}, Upper: {:?}", results.len(), delta_workgroup_sizes, lower, upper);
-    // println!("results front: {}", results[0]);
-    // println!("results front+1: {}", results[1]);
-    // println!("results front+2: {}", results[2]);
-    // println!("results back: {}", results[output_size - 1]);
-    // println!("{:?}", results);
-    // panic!("");
 
     // // Calculate the kernel duration, from the kernel_event
     // let start_time = kernel_event.profiling_command_start()?;

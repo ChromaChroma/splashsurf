@@ -3,7 +3,7 @@
 double3 Todouble3(double* doubles) {
     return (double3)((double)doubles[0], (double)doubles[1], (double)doubles[2]);
 }
-kernel void saxpy_float (
+kernel void reconstruct (
     global double* out
     , global long* lower
     , global long* np
