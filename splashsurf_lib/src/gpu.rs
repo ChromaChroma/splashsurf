@@ -9,7 +9,7 @@ use opencl3::memory::{Buffer, CL_MEM_READ_ONLY, CL_MEM_READ_WRITE, CL_MEM_WRITE_
 use opencl3::platform::Platform;
 use opencl3::program::{CL_STD_2_0, Program};
 use opencl3::Result;
-use opencl3::types::{cl_double, cl_mem_flags, CL_NON_BLOCKING, cl_ulong};
+use opencl3::types::{cl_double, cl_long, cl_mem_flags, CL_NON_BLOCKING, cl_ulong};
 use opencl3::types::cl_event;
 
 pub struct KernelData {
@@ -23,7 +23,7 @@ pub struct KernelData {
 
 pub(crate) fn init_kernel() -> Result<KernelData> {
     let shaders_code = include_str!("shaders/shaders.cl");
-    const KERNEL_NAME: &str = "reconstruct";
+    const KERNEL_NAME: &str = "reconstruct2";
 
     let platforms = opencl3::platform::get_platforms()?;
     let platform = platforms.first().expect("No OpenCL platforms found.");
@@ -327,16 +327,21 @@ pub(crate) fn gpu_small_reconstruct(
     Ok(results.to_owned())
 }
 
-fn new_queue_buffer<D: From<T>, T, const N: usize>(context: &Context, queue: &CommandQueue, values: [T; N], cl_mem_flags: cl_mem_flags) -> Buffer<D> {
+pub(crate) fn new_queue_buffer<D: From<T>, T, const N: usize>(context: &Context, queue: &CommandQueue, values: [T; N], cl_mem_flags: cl_mem_flags) -> Buffer<D> {
     let mut buffer = unsafe { Buffer::<D>::create(&context, cl_mem_flags, N, ptr::null_mut()).unwrap() };
     let _parameters_event = unsafe { (*queue).enqueue_write_buffer(&mut buffer, CL_BLOCKING, 0, &values.map(|x| D::from(x)), &[]).unwrap() };
     return buffer;
 }
 
-fn convert_slice_to_cl_double(input: &[f64]) -> Box<[cl_double]> {
+pub(crate) fn convert_slice_to_cl_double(input: &[f64]) -> Box<[cl_double]> {
     let output: Vec<cl_double> = input.iter().map(|&x| x as cl_double).collect();
     output.into_boxed_slice()
 }
+pub(crate) fn convert_slice_to_cl_long(input: &[u64]) -> Box<[cl_long]> {
+    let output: Vec<cl_long> = input.iter().map(|&x| x as cl_long).collect();
+    output.into_boxed_slice()
+}
+
 
 pub(crate) fn gpu_img(
     kernel_data: &KernelData,
