@@ -221,8 +221,8 @@ pub(crate) fn gpu_small_reconstruct(
     // let output_size: usize = delta_workgroup_sizes[0] * delta_workgroup_sizes[1] * delta_workgroup_sizes[2];
     let output_size: usize = levelset_grid_f64.len();
     let levelset_grid_f64_arr: &[cl_double] = &*convert_slice_to_cl_double(levelset_grid_f64);
-    let mut output_buffer = unsafe {Buffer::<cl_double>::create(&context, CL_MEM_WRITE_ONLY, output_size, ptr::null_mut())? };
-    let _output_buffer_write_event = unsafe {  queue.enqueue_write_buffer(&mut output_buffer, CL_BLOCKING, 0,  &levelset_grid_f64_arr, &[])? };
+    let mut output_buffer = unsafe { Buffer::<cl_double>::create(&context, CL_MEM_WRITE_ONLY, output_size, ptr::null_mut())? };
+    let _output_buffer_write_event = unsafe { queue.enqueue_write_buffer(&mut output_buffer, CL_BLOCKING, 0, &levelset_grid_f64_arr, &[])? };
 
 
     // Create OpenCL device buffers
@@ -337,6 +337,7 @@ pub(crate) fn convert_slice_to_cl_double(input: &[f64]) -> Box<[cl_double]> {
     let output: Vec<cl_double> = input.iter().map(|&x| x as cl_double).collect();
     output.into_boxed_slice()
 }
+
 pub(crate) fn convert_slice_to_cl_long(input: &[u64]) -> Box<[cl_long]> {
     let output: Vec<cl_long> = input.iter().map(|&x| x as cl_long).collect();
     output.into_boxed_slice()

@@ -4,36 +4,32 @@ double3 Todouble3(double* doubles) {
     return (double3)((double)doubles[0], (double)doubles[1], (double)doubles[2]);
 }
 kernel void reconstruct2 (
+    // Output Buffer
       global double* out
+    // Point (flattened) Coordinates and Densities
     , global double* p_i
     , global double* rho
-
-    
+    // Local Marching Cubes Grid
     , global double* local_mcg_aabb_np // local_marching_cubes_grid__aabb_min
     , double lmc_cell_size
+    //
     , long cube_radius
     , global long* extents
-
     , double csr // compact_support_radius
-
-    
+    //
     , global long* np
     , global long* subdomain_ijk
     , global long* cells_per_subdomain
-    
+    // Global Marching Cubes Grid
     , global long* gmcg_np // global_marching_cubes_grid__np
     , global double* gmcg_aabb_np // global_marching_cubes_grid__aabb_min
     , double gmcg_cs// global_marching_cubes_grid__cell_size
-    
     // [0] : squared_support_with_margin
     // [1] : particle_rest_mass
     // [2] : compact_support_radius
-    // // [3] : normalization
-    // // [4] : surface_threshold
     , global double* parameters
 ) {
     const size_t id = get_global_id(0);
-
 
     const double rho_id = rho[id];
 
@@ -46,8 +42,6 @@ kernel void reconstruct2 (
         p_i[id*3 + 2]);
     
 
-
-    // out[id] += (double)((pi_x - local_mcg_aabb_np[0])  / lmc_cell_size);
     long3 particle_cell = (long3)(
         (long)floor((pi_x - local_mcg_aabb_np[0]) / lmc_cell_size),
         (long)floor((pi_y - local_mcg_aabb_np[1]) / lmc_cell_size),
@@ -69,7 +63,6 @@ kernel void reconstruct2 (
     
     
     const double normalization_sigma = 8.0 / (csr * csr * csr);
-    
     
     for (int x = lower.x; x < upper.x; x++)
     {
@@ -104,8 +97,6 @@ kernel void reconstruct2 (
                 double3 dx = p_i_double3 - point_coordinates;      
 
                 double dx_norm_sq = dot(dx, dx);
-
-                // out[id] += (double)dx_norm_sq;  
                 
                 // if dx_norm_sq < squared_support_with_margin (parameters[0])
                 if (dx_norm_sq < parameters[0]) {
@@ -129,7 +120,6 @@ kernel void reconstruct2 (
 
                     long flat_point_idx = x * np[1] * np[2] + y * np[2] + z;
                     out[flat_point_idx] += interpolated_value;
-                    
                 };
 
             }

@@ -11,7 +11,7 @@ use anyhow::{anyhow, Context};
 use arrayvec::ArrayVec;
 use itertools::Itertools;
 use log::{info, trace};
-use nalgebra::{SVector, Vector3};
+use nalgebra::{abs, SVector, Vector3};
 use num_integer::Integer;
 use num_traits::{FromPrimitive, NumCast, ToPrimitive};
 use opencl3::command_queue::{CL_BLOCKING, cl_event, CL_NON_BLOCKING, CL_QUEUE_PROFILING_ENABLE, cl_ulong, CommandQueue};
@@ -43,12 +43,14 @@ fn print_non_zero(values: Vec<cl_double>) {
     }
     println!();
 }
+
 fn print_nr_of_zero<R: Real>(values: Vec<R>) {
     println!("NR of Zeroes: {}, Len: {} ",
              values.clone().into_iter().filter(|x| *x == R::zero()).count(),
              values.clone().len()
     );
 }
+
 fn write_non_zero(file: String, values: Vec<f64>) {
     let mut file = std::fs::File::create(file).expect("fine file");
     for (i, x) in values.iter().enumerate() {
@@ -57,8 +59,8 @@ fn write_non_zero(file: String, values: Vec<f64>) {
         }
     }
     file.flush().expect("TODO: panic message");
-
 }
+
 fn write_non_zero_R<R: Real>(values: Vec<R>) {
     let mut file = std::fs::File::create("log-original.txt").expect("fine file");
     for (i, x) in values.iter().enumerate() {
@@ -67,22 +69,49 @@ fn write_non_zero_R<R: Real>(values: Vec<R>) {
         }
     }
     file.flush().expect("TODO: panic message");
-
 }
 
 fn to_u64_array<I: Index, const N: usize>(arr: [I; N]) -> [u64; N] {
     arr.map(|i| i.to_u64().unwrap())
 }
+
 fn to_u64_svec<R: Real, const N: usize>(svec: SVector<R, N>) -> [f64; N] {
     let arr: [R; N] = svec.as_slice()[0..N].try_into().unwrap();
     arr.map(|i| i.to_f64().unwrap())
 }
+
 fn to_u64_vector3<R: Real>(vec: Vector3<R>) -> [f64; 3] {
     [
         vec.x.clone().to_f64().unwrap(),
         vec.y.clone().to_f64().unwrap(),
         vec.z.clone().to_f64().unwrap()
     ]
+}
+
+fn bufferer_R<R: Real>(context: &opencl3::context::Context, queue: &CommandQueue, arr: &[R], cl_mem_flags: cl_mem_flags) -> Buffer<cl_double> {
+    bufferer_double(context, queue, &arr.iter().map(|r| r.to_f64().unwrap()).collect::<Vec<f64>>(), cl_mem_flags)
+}
+
+fn bufferer_double(context: &opencl3::context::Context, queue: &CommandQueue, arr: &[f64], cl_mem_flags: cl_mem_flags) -> Buffer<cl_double> {
+    let output_size: usize = arr.len();
+    let cl_arr: &[cl_double] = &*convert_slice_to_cl_double(arr);
+
+    let mut buffer = unsafe {
+        Buffer::<cl_double>::create(&context, cl_mem_flags, output_size, ptr::null_mut()).expect("Could not create buffer")
+    };
+    let _buffer_write_event = unsafe {
+        queue.enqueue_write_buffer(&mut buffer, CL_BLOCKING, 0, &cl_arr, &[]).expect("Could not enqueue buffer")
+    };
+    buffer
+}
+
+fn bufferer_long(context: &opencl3::context::Context, queue: &CommandQueue, arr: &[u64], cl_mem_flags: cl_mem_flags) -> Buffer<cl_long> {
+    let output_size: usize = arr.len();
+    let cl_arr: &[cl_long] = &*convert_slice_to_cl_long(arr);
+
+    let mut buffer = unsafe { Buffer::<cl_long>::create(&context, cl_mem_flags, output_size, ptr::null_mut()).expect("Could not create buffer") };
+    let _buffer_write_event = unsafe { queue.enqueue_write_buffer(&mut buffer, CL_BLOCKING, 0, &cl_arr, &[]).expect("Could not enqueue buffer") };
+    buffer
 }
 
 // TODO: Implement single-threaded processing
@@ -751,10 +780,6 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
     global_particle_densities: &[R],
     subdomains: &Subdomains<I>,
 ) -> Vec<SurfacePatch<I, R>> {
-
-
-
-
     profile!(parent, "reconstruction");
 
     let squared_support = parameters.compact_support_radius * parameters.compact_support_radius;
@@ -956,13 +981,10 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
             let extents = mc_grid.points_per_dim();
 
             /////////////////////////////////////
-            ////
+            //// GPU Kernal Code
             ////////////////////////////////////
-            // let KernelData { platform, device, context, program, kernel } = kernel_data;
-            let kernel_context = &kernel_data.context;
 
-            let global_queue = CommandQueue::create_default(kernel_context, CL_QUEUE_PROFILING_ENABLE)
-                .expect("CommandQueue::create_default failed");
+            let kernel_context = &kernel_data.context;
 
             // Create a command_queue on the Context's device
             let queue = CommandQueue::create_default(&kernel_context, CL_QUEUE_PROFILING_ENABLE).expect("CommandQueue::create_default failed");
@@ -970,105 +992,23 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
 
             // Output Buffers
             let levelset_grid_f64_arr: &[cl_double] = &*convert_slice_to_cl_double(&levelset_grid_f64);
-            let mut output_buffer = unsafe {
-                Buffer::<cl_double>::create(&kernel_context, CL_MEM_READ_WRITE, output_size, ptr::null_mut())
-                    .expect("Could not create output_buffer")
-
-            };
-            let _output_buffer_write_event = unsafe {
-                queue.enqueue_write_buffer(&mut output_buffer, CL_BLOCKING, 0, &levelset_grid_f64_arr, &[])
-                    .expect("Could not enqueue output_buffer")
-            };
-
-
-            // // Input Argument Buffers
-            // let lower_buffer: Buffer<cl_ulong> = crate::gpu::new_queue_buffer(&context, &queue, lower, CL_MEM_READ_ONLY);
-            // let x_np: Buffer<cl_ulong> = crate::gpu::new_queue_buffer(&context, &queue, n_points_per_dim, CL_MEM_READ_ONLY);
-            // let sd_ijk: Buffer<cl_ulong> = crate::gpu::new_queue_buffer(&context, &queue, subdomain_ijk, CL_MEM_READ_ONLY);
-            // let sp_sd: Buffer<cl_ulong> = crate::gpu::new_queue_buffer(&context, &queue, cells_per_subdomain, CL_MEM_READ_ONLY);
-            // let gmcg_np: Buffer<cl_ulong> = crate::gpu::new_queue_buffer(&context, &queue, global_marching_cubes_grid__np, CL_MEM_READ_ONLY);
-            //
-            //
-            // let gmcg_aabb_min: Buffer<cl_double> = crate::gpu::new_queue_buffer(&context, &queue, global_marching_cubes_grid__aabb_min, CL_MEM_READ_ONLY);
-            // let p_i_buffer: Buffer<cl_double> = crate::gpu::new_queue_buffer(&context, &queue, p_i, CL_MEM_READ_ONLY);
-            // let parameters_buffer: Buffer<cl_double> = crate::gpu::new_queue_buffer(&context, &queue, parameters, CL_MEM_READ_ONLY);
-            //
-            // let delta_workgroup_sizes: [usize; 3] = crate::gpu::usize_diff(lower, upper);
-
-            // // Global Output Buffers
-            // let output_size: usize = levelset_grid_f64.len();
-            // let levelset_grid_arr: &[cl_double] = &*gpu::convert_slice_to_cl_double(&levelset_grid_f64);
-            // let mut output_buffer = unsafe {
-            //     Buffer::<cl_double>::create(kernel_context, CL_MEM_READ_WRITE, output_size, ptr::null_mut())
-            //         .expect("Could not create output_buffer")
-            // };
-            // let _output_buffer_write_event = unsafe {
-            //     global_queue.enqueue_write_buffer(&mut output_buffer, CL_BLOCKING, 0, &levelset_grid_arr, &[])
-            //         .expect("Could not enqueue_write_buffer output_buffer")
-            // };
-            fn bufferer_R<R: Real>(context: &opencl3::context::Context, queue: &CommandQueue, arr: &[R], cl_mem_flags: cl_mem_flags) -> Buffer<cl_double>{
-                bufferer_double(context, queue, &arr.iter().map(|r| r.to_f64().unwrap()).collect::<Vec<f64>>(), cl_mem_flags)
-            }
-            fn bufferer_double(context: &opencl3::context::Context, queue: &CommandQueue, arr: &[f64], cl_mem_flags: cl_mem_flags) -> Buffer<cl_double>{
-                let output_size: usize = arr.len();
-                let cl_arr: &[cl_double] = &*convert_slice_to_cl_double(arr);
-
-                let mut buffer = unsafe {
-                    Buffer::<cl_double>::create(&context, cl_mem_flags, output_size, ptr::null_mut()).expect("Could not create buffer")
-                };
-                let _buffer_write_event = unsafe {
-                    queue.enqueue_write_buffer(&mut buffer, CL_BLOCKING, 0,  &cl_arr, &[]).expect("Could not enqueue buffer")
-                };
-                buffer
-            }
-            fn bufferer_long(context: &opencl3::context::Context, queue: &CommandQueue, arr: &[u64], cl_mem_flags: cl_mem_flags) -> Buffer<cl_long>{
-                let output_size: usize = arr.len();
-                let cl_arr: &[cl_long] = &*convert_slice_to_cl_long(arr);
-                // arr.iter().map(|&x| x as cl_double).collect()
-
-                let mut buffer = unsafe {
-                    Buffer::<cl_long>::create(&context, cl_mem_flags, output_size, ptr::null_mut()).expect("Could not create buffer")
-                };
-                let _buffer_write_event = unsafe {
-                    queue.enqueue_write_buffer(&mut buffer, CL_BLOCKING, 0,  &cl_arr, &[]).expect("Could not enqueue buffer")
-                };
-                buffer
-            }
-
-
-
-
-            /////////////////////////////////////
-            ////
-            ////////////////////////////////////
+            let mut output_buffer = unsafe {Buffer::<cl_double>::create(&kernel_context, CL_MEM_READ_WRITE, output_size, ptr::null_mut()).expect("Could not create output_buffer")};
+            let _output_buffer_write_event = unsafe {queue.enqueue_write_buffer(&mut output_buffer, CL_BLOCKING, 0, &levelset_grid_f64_arr, &[]).expect("Could not enqueue output_buffer")};
 
             let work_group_size = subdomain_particles.len();
 
-            // [x0, y0, z0, x1, y1, z0, ....]
+            // Flattened Point Coordinates [x0, y0, z0, x1, y1, z0, ....]
             let flattened_ps = subdomain_particles.iter()
                 .flat_map(|vec| [vec.x.to_f64().unwrap(), vec.y.to_f64().unwrap(), vec.z.to_f64().unwrap()])
                 .collect::<Vec<f64>>();
-            let p_buffer : Buffer<cl_double> = bufferer_double(&kernel_context, &queue, &flattened_ps, CL_MEM_READ_ONLY);
-                // gpu::new_queue_buffer(&kernel_context, &queue, flattened_ps, CL_MEM_READ_ONLY);
+            let p_buffer: Buffer<cl_double> = bufferer_double(&kernel_context, &queue, &flattened_ps, CL_MEM_READ_ONLY);
 
-            // [ρ0, ρ1, ...]
-            let rho_buffer : Buffer<cl_double>  = bufferer_R(&kernel_context, &queue, subdomain_particle_densities, CL_MEM_READ_ONLY);
+            // Point Densities [ρ0, ρ1, ...]
+            let rho_buffer: Buffer<cl_double> = bufferer_R(&kernel_context, &queue, subdomain_particle_densities, CL_MEM_READ_ONLY);
 
             let aabb_min = mc_grid.aabb().min();
-            let lmcg_aabb_np_buffer : Buffer<cl_double>  = bufferer_double(
-                &kernel_context, &queue,
-            &[
-                    aabb_min.x.to_f64().unwrap(),
-                    aabb_min.y.to_f64().unwrap(),
-                    aabb_min.z.to_f64().unwrap()
-                ],
-                // &mc_grid.aabb().min()
-                //     .as_slice()[0..3]
-                //     .iter()
-                //     .map(|x| x.to_f64().unwrap())
-                //     .collect::<Vec<f64>>(),
-                CL_MEM_READ_ONLY);
-            let extents_buffer : Buffer<cl_long>  = bufferer_long(&kernel_context, &queue, &extents.iter().map(|x| x.to_u64().unwrap()).collect::<Vec<u64>>(), CL_MEM_READ_ONLY);
+            let lmcg_aabb_np_buffer: Buffer<cl_double> = bufferer_double(&kernel_context, &queue, &[aabb_min.x.to_f64().unwrap(), aabb_min.y.to_f64().unwrap(), aabb_min.z.to_f64().unwrap()], CL_MEM_READ_ONLY);
+            let extents_buffer: Buffer<cl_long> = bufferer_long(&kernel_context, &queue, &extents.iter().map(|x| x.to_u64().unwrap()).collect::<Vec<u64>>(), CL_MEM_READ_ONLY);
 
             let np_buffer: Buffer<cl_ulong> = new_queue_buffer(&kernel_context, &queue, to_u64_array(*mc_grid.points_per_dim()), CL_MEM_READ_ONLY);
             let sd_ijk_buffer: Buffer<cl_ulong> = new_queue_buffer(&kernel_context, &queue, subdomain_ijk, CL_MEM_READ_ONLY);
@@ -1081,8 +1021,6 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
                 squared_support_with_margin.to_f64().unwrap(),
                 parameters.particle_rest_mass.to_f64().unwrap(),
                 parameters.compact_support_radius.to_f64().unwrap(),
-                // normalization_sigma,
-                // parameters.surface_threshold.to_f64().unwrap()
             ], CL_MEM_READ_ONLY);
 
 
@@ -1119,178 +1057,180 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
             // Wait for the read_event to complete.
             read_event.wait().expect("Could not read event for retrieveing data from gpu bufer");
 
+            // Calculate the kernel duration, from the kernel_event
+            let start_time = kernel_event.profiling_command_start().unwrap();
+            let end_time = kernel_event.profiling_command_end().unwrap();
+            let duration = end_time - start_time;
+            println!("kernel execution duration (ns): {}", duration);
+
             // print_non_zero(results.to_vec());
-            levelset_grid_f64 = results.to_vec();
-            // *levelset_grid = results.to_vec().clone()
-            //     .into_iter()
-            //     .map(|x| R::from(x).unwrap())
-            //     .collect();
+            // levelset_grid_f64 = results.to_vec();
+            *levelset_grid = results.to_vec().clone()
+                .into_iter()
+                .map(|x| R::from(x).unwrap())
+                .collect();
 
+            /////////////////////////////////////
+            //// END GPU Kernal Code
+            ////////////////////////////////////
 
-            println!("Len: {}", subdomain_particles.clone().len());
-            for (inxdx , (p_i, rho_i)) in subdomain_particles
-                .iter()
-                .copied()
-                .zip(subdomain_particle_densities.iter().copied())
-                .enumerate()
-            {
-
-
-                // Get grid cell containing particle
-                let particle_cell = mc_grid.enclosing_cell(&p_i);
-
-                // Compute lower and upper bounds of the grid points possibly affected by the particle
-                // We want to loop over the vertices of the enclosing cells plus all points in `cube_radius` distance from the cell
-
-                let lower = [
-                    (particle_cell[0] - cube_radius).max(I::zero()),
-                    (particle_cell[1] - cube_radius).max(I::zero()),
-                    (particle_cell[2] - cube_radius).max(I::zero()),
-                ];
-
-
-
-                // We add 2 because
-                //  - we want to loop over all grid points of the cell (+1 for upper points) + the radius
-                //  - the upper range limit is exclusive (+1)
-                let upper = [
-                    (particle_cell[0] + cube_radius + I::two()).min(extents[0]),
-                    (particle_cell[1] + cube_radius + I::two()).min(extents[1]),
-                    (particle_cell[2] + cube_radius + I::two()).min(extents[2]),
-                ];
-
-
-                // let normalization_sigma = 8.0 / (parameters.compact_support_radius.to_f64().unwrap()
-                //     * parameters.compact_support_radius.to_f64().unwrap()
-                //     * parameters.compact_support_radius.to_f64().unwrap());
-
-
-                // let res = gpu::gpu_img(
-                //     &kernel_data,
-                //     // &output_buffer
-                //
-                //     &levelset_grid_f64,
-                //
-                //
-                //     to_u64_array(lower),
-                //     to_u64_array(upper),
-                //
-                //     to_u64_array(*mc_grid.points_per_dim()),
-                //     subdomain_ijk,
-                //     cells_per_subdomain,
-                //     to_u64_array(*parameters.global_marching_cubes_grid.points_per_dim()),
-                //     to_u64_svec(*parameters.global_marching_cubes_grid.aabb().min()),
-                //     parameters.global_marching_cubes_grid.cell_size().to_f64().unwrap(),
-                //     to_u64_vector3(p_i),
-                //     rho_i.to_f64().unwrap(),
-                //     [
-                //         squared_support_with_margin.to_f64().unwrap(),
-                //         parameters.particle_rest_mass.to_f64().unwrap(),
-                //         parameters.compact_support_radius.to_f64().unwrap(),
-                //         normalization_sigma,
-                //         parameters.surface_threshold.to_f64().unwrap()
-                //     ],
-                // ).expect("TODO: panic message");
-                //
-                // levelset_grid_f64 = res;
-
-
-
-
-                //
-                // // Loop over all grid points around the enclosing cell
-                // // println!("::Original Loop::");
-                for i in I::range(lower[0], upper[0]).iter() {
-                    for j in I::range(lower[1], upper[1]).iter() {
-                        for k in I::range(lower[2], upper[2]).iter() {
-                            let point_ijk = [i, j, k];
-                            let local_point = mc_grid
-                                .get_point(point_ijk)
-                                .expect("point has to be part of the subdomain grid");
-                            //let point_coordinates = mc_grid.point_coordinates(&point);
-
-                            let [i, j, k] = point_ijk.map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
-                            // Use global coordinate calculation for consistency with neighboring domains
-                            let global_point_ijk = [
-                                subdomain_ijk[0] * cells_per_subdomain[0] + i,
-                                subdomain_ijk[1] * cells_per_subdomain[1] + j,
-                                subdomain_ijk[2] * cells_per_subdomain[2] + k,
-                            ];
-
-
-                            let global_point = parameters
-                                .global_marching_cubes_grid
-                                .get_point(global_point_ijk)
-                                .expect("point has to be part of the global mc grid");
-                            let point_coordinates = parameters
-                                .global_marching_cubes_grid
-                                .point_coordinates(&global_point);
-
-
-                            let dx = p_i - point_coordinates;
-
-
-                            let dx_norm_sq = dx.norm_squared();
-
-                            // levelset_grid[inxdx] +=  R::from(
-                            //     dx_norm_sq
-                            // ).expect("dddd");
-
-                            if dx_norm_sq < squared_support_with_margin {
-                                let v_i = parameters.particle_rest_mass / rho_i;
-                                let r = dx_norm_sq.sqrt();
-
-                                let w_ij = kernel.evaluate(r);
-
-                                let interpolated_value = v_i * w_ij;
-
-                                let flat_point_idx = mc_grid.flatten_point_index(&local_point);
-                                let flat_point_idx = flat_point_idx.to_usize().unwrap();
-                                levelset_grid[flat_point_idx] += interpolated_value;
-
-                            }
-                        }
-                    }
-                }
-
-
-            }
-
-
-
-            // let mut events: Vec<cl_event> = Vec::default();
-            // // events.push(kernel_event.get());
-            // let mut results = &mut vec![0 as cl_double; output_size];
-            // let read_event = unsafe {
-            //     global_queue.enqueue_read_buffer(&output_buffer, CL_NON_BLOCKING, 0, &mut results, &events)
-            //         .expect("Could not read global queue buffer")
-            // };
+            // println!("Len: {}", subdomain_particles.clone().len());
+            // for (inxdx , (p_i, rho_i)) in subdomain_particles
+            //     .iter()
+            //     .copied()
+            //     .zip(subdomain_particle_densities.iter().copied())
+            //     .enumerate()
+            // {
             //
-            // // Wait for the read_event to complete.
-            // read_event.wait()
-            //     .expect("GPU run should have been successfull");
-
-            // // Calculate the kernel duration, from the kernel_event
-            // let start_time = kernel_event.profiling_command_start()?;
-            // let end_time = kernel_event.profiling_command_end()?;
-            // let duration = end_time - start_time;
-            // println!("kernel execution duration (ns): {}", duration);
-
-            // levelset_grid_f64 = results.to_vec()
-            // Ok(results.to_vec())
-
-
+            //
+            //     // Get grid cell containing particle
+            //     let particle_cell = mc_grid.enclosing_cell(&p_i);
+            //
+            //     // Compute lower and upper bounds of the grid points possibly affected by the particle
+            //     // We want to loop over the vertices of the enclosing cells plus all points in `cube_radius` distance from the cell
+            //
+            //     let lower = [
+            //         (particle_cell[0] - cube_radius).max(I::zero()),
+            //         (particle_cell[1] - cube_radius).max(I::zero()),
+            //         (particle_cell[2] - cube_radius).max(I::zero()),
+            //     ];
+            //
+            //
+            //
+            //     // We add 2 because
+            //     //  - we want to loop over all grid points of the cell (+1 for upper points) + the radius
+            //     //  - the upper range limit is exclusive (+1)
+            //     let upper = [
+            //         (particle_cell[0] + cube_radius + I::two()).min(extents[0]),
+            //         (particle_cell[1] + cube_radius + I::two()).min(extents[1]),
+            //         (particle_cell[2] + cube_radius + I::two()).min(extents[2]),
+            //     ];
+            //
+            //
+            //     // let normalization_sigma = 8.0 / (parameters.compact_support_radius.to_f64().unwrap()
+            //     //     * parameters.compact_support_radius.to_f64().unwrap()
+            //     //     * parameters.compact_support_radius.to_f64().unwrap());
+            //
+            //
+            //     // let res = gpu::gpu_img(
+            //     //     &kernel_data,
+            //     //     // &output_buffer
+            //     //
+            //     //     &levelset_grid_f64,
+            //     //
+            //     //
+            //     //     to_u64_array(lower),
+            //     //     to_u64_array(upper),
+            //     //
+            //     //     to_u64_array(*mc_grid.points_per_dim()),
+            //     //     subdomain_ijk,
+            //     //     cells_per_subdomain,
+            //     //     to_u64_array(*parameters.global_marching_cubes_grid.points_per_dim()),
+            //     //     to_u64_svec(*parameters.global_marching_cubes_grid.aabb().min()),
+            //     //     parameters.global_marching_cubes_grid.cell_size().to_f64().unwrap(),
+            //     //     to_u64_vector3(p_i),
+            //     //     rho_i.to_f64().unwrap(),
+            //     //     [
+            //     //         squared_support_with_margin.to_f64().unwrap(),
+            //     //         parameters.particle_rest_mass.to_f64().unwrap(),
+            //     //         parameters.compact_support_radius.to_f64().unwrap(),
+            //     //         normalization_sigma,
+            //     //         parameters.surface_threshold.to_f64().unwrap()
+            //     //     ],
+            //     // ).expect("TODO: panic message");
+            //     //
+            //     // levelset_grid_f64 = res;
+            //
+            //
+            //
+            //
+            //     //
+            //     // // Loop over all grid points around the enclosing cell
+            //     // // println!("::Original Loop::");
+            //     for i in I::range(lower[0], upper[0]).iter() {
+            //         for j in I::range(lower[1], upper[1]).iter() {
+            //             for k in I::range(lower[2], upper[2]).iter() {
+            //                 let point_ijk = [i, j, k];
+            //                 let local_point = mc_grid
+            //                     .get_point(point_ijk)
+            //                     .expect("point has to be part of the subdomain grid");
+            //                 //let point_coordinates = mc_grid.point_coordinates(&point);
+            //
+            //                 let [i, j, k] = point_ijk.map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
+            //                 // Use global coordinate calculation for consistency with neighboring domains
+            //                 let global_point_ijk = [
+            //                     subdomain_ijk[0] * cells_per_subdomain[0] + i,
+            //                     subdomain_ijk[1] * cells_per_subdomain[1] + j,
+            //                     subdomain_ijk[2] * cells_per_subdomain[2] + k,
+            //                 ];
+            //
+            //
+            //                 let global_point = parameters
+            //                     .global_marching_cubes_grid
+            //                     .get_point(global_point_ijk)
+            //                     .expect("point has to be part of the global mc grid");
+            //                 let point_coordinates = parameters
+            //                     .global_marching_cubes_grid
+            //                     .point_coordinates(&global_point);
+            //
+            //
+            //                 let dx = p_i - point_coordinates;
+            //
+            //
+            //                 let dx_norm_sq = dx.norm_squared();
+            //
+            //                 // levelset_grid[inxdx] +=  R::from(
+            //                 //     dx_norm_sq
+            //                 // ).expect("dddd");
+            //
+            //                 if dx_norm_sq < squared_support_with_margin {
+            //                     let v_i = parameters.particle_rest_mass / rho_i;
+            //                     let r = dx_norm_sq.sqrt();
+            //
+            //                     let w_ij = kernel.evaluate(r);
+            //
+            //                     let interpolated_value = v_i * w_ij;
+            //
+            //                     let flat_point_idx = mc_grid.flatten_point_index(&local_point);
+            //                     let flat_point_idx = flat_point_idx.to_usize().unwrap();
+            //                     levelset_grid[flat_point_idx] += interpolated_value;
+            //                     // if (flat_point_idx == 71089) {
+            //                     //     levelset_grid[inxdx] += interpolated_value;
+            //                     //     levelset_grid[0] += interpolated_value;
+            //                     //     // out[id] += interpolated_value;
+            //                     // }
+            //
+            //                 }
+            //             }
+            //         }
+            //     }
+            //
+            //
+            // }
 
             // *levelset_grid = levelset_grid_f64.to_vec().clone().into_iter().map(|x| R::from(x).unwrap()).collect();
 
-            print_nr_of_zero(levelset_grid_f64.clone());
-            print_nr_of_zero(levelset_grid.clone());
 
+            /////////////////////////////////////
+            //// Debug Compare GPU and CPU implementation results
+            ////////////////////////////////////
+
+            let list: Vec<f64> = levelset_grid_f64.clone()
+                .into_iter()
+                .zip(levelset_grid.clone().into_iter())
+                .map(|(x, y)| x - y.to_f64().unwrap())
+                .collect();
+
+            write_non_zero("log-diff.txt".to_string(), list.clone());
             write_non_zero("log.txt".to_string(), levelset_grid_f64.clone());
             write_non_zero_R(levelset_grid.clone());
-
             // print_non_zero(levelset_grid_f64.clone());
             // print_nr_of_zero(levelset_grid_f64.clone());
+
+            /////////////////////////////////////
+            //// END Debug Compare GPU and CPU implementation results
+            ////////////////////////////////////
+
         }
 
         let mut vertices = Vec::new();
