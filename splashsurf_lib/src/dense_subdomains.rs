@@ -1215,15 +1215,15 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
             //// Debug Compare GPU and CPU implementation results
             ////////////////////////////////////
 
-            let list: Vec<f64> = levelset_grid_f64.clone()
-                .into_iter()
-                .zip(levelset_grid.clone().into_iter())
-                .map(|(x, y)| x - y.to_f64().unwrap())
-                .collect();
-
-            write_non_zero("log-diff.txt".to_string(), list.clone());
-            write_non_zero("log.txt".to_string(), levelset_grid_f64.clone());
-            write_non_zero_R(levelset_grid.clone());
+            // let list: Vec<f64> = levelset_grid_f64.clone()
+            //     .into_iter()
+            //     .zip(levelset_grid.clone().into_iter())
+            //     .map(|(x, y)| x - y.to_f64().unwrap())
+            //     .collect();
+            //
+            // write_non_zero("log-diff.txt".to_string(), list.clone());
+            // write_non_zero("log.txt".to_string(), levelset_grid_f64.clone());
+            // write_non_zero_R(levelset_grid.clone());
             // print_non_zero(levelset_grid_f64.clone());
             // print_nr_of_zero(levelset_grid_f64.clone());
 
