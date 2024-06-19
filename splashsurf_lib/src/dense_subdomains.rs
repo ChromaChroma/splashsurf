@@ -43,20 +43,15 @@ fn print_non_zero(values: Vec<cl_double>) {
     }
     println!();
 }
-fn print_nr_of_zero(values: Vec<cl_double>) {
+fn print_nr_of_zero<R: Real>(values: Vec<R>) {
     println!("NR of Zeroes: {}, Len: {} ",
-             values.clone().into_iter().filter(|x| *x == 0.0).count(),
+             values.clone().into_iter().filter(|x| *x == R::zero()).count(),
              values.clone().len()
     );
 }
 fn write_non_zero(file: String, values: Vec<f64>) {
     let mut file = std::fs::File::create(file).expect("fine file");
     for (i, x) in values.iter().enumerate() {
-        // if i == 1781 {
-        //     print!("{}->{} ", i, x);
-        //     write!(file, "1781::{:?}->{:?}\n", i, x).expect("TODO: panic message1");
-        //
-        // }
         if *x != 0.0 {
             write!(file, "{}->{}\n", i, x).expect("TODO: panic message1");
         }
@@ -67,13 +62,8 @@ fn write_non_zero(file: String, values: Vec<f64>) {
 fn write_non_zero_R<R: Real>(values: Vec<R>) {
     let mut file = std::fs::File::create("log-original.txt").expect("fine file");
     for (i, x) in values.iter().enumerate() {
-        // if i == 1781 {
-        //     print!("{}->{} ", i, x);
-        //     write!(file, "1781::{:?}->{:?}\n", i, x).expect("TODO: panic message1");
-        //
-        // }
         if *x != R::zero() {
-        write!(file, "{:?}->{:?}\n", i, x).expect("TODO: panic message1");
+            write!(file, "{}->{}\n", i, x.to_f64().unwrap()).expect("TODO: panic message1");
         }
     }
     file.flush().expect("TODO: panic message");
@@ -1292,6 +1282,9 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
 
 
             // *levelset_grid = levelset_grid_f64.to_vec().clone().into_iter().map(|x| R::from(x).unwrap()).collect();
+
+            print_nr_of_zero(levelset_grid_f64.clone());
+            print_nr_of_zero(levelset_grid.clone());
 
             write_non_zero("log.txt".to_string(), levelset_grid_f64.clone());
             write_non_zero_R(levelset_grid.clone());
