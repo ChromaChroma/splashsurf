@@ -74,6 +74,7 @@ pub mod uniform_grid;
 #[macro_use]
 mod utils;
 pub(crate) mod workspace;
+mod gpu;
 
 // TODO: Add documentation of feature flags
 // TODO: Feature flag for multi threading
@@ -89,6 +90,7 @@ pub(crate) mod workspace;
 pub(crate) type HashState = fxhash::FxBuildHasher;
 pub(crate) type MapType<K, V> = std::collections::HashMap<K, V, HashState>;
 pub(crate) type SetType<K> = std::collections::HashSet<K, HashState>;
+
 pub(crate) fn new_map<K, V>() -> MapType<K, V> {
     // TODO: Remove this function
     Default::default()
@@ -113,6 +115,7 @@ pub(crate) fn new_map<K, V>() -> MapType<K, V> {
 */
 
 pub(crate) type ParallelMapType<K, V> = dashmap::DashMap<K, V, HashState>;
+
 fn new_parallel_map<K: Eq + Hash, V>() -> ParallelMapType<K, V> {
     ParallelMapType::with_hasher(HashState::default())
 }
@@ -178,6 +181,9 @@ pub struct Parameters<R: Real> {
     /// Depending on the settings of the reconstruction, neighborhood lists are only computed locally
     /// in subdomains. Enabling this flag joins this data over all particles which can add a small overhead.
     pub global_neighborhood_list: bool,
+    /// Whether surface reconstruction should be done on the GPU or not
+    /// By default the cpu will be used, other parameters might not apply when using the GPU
+    pub use_gpu: bool,
 }
 
 impl<R: Real> Parameters<R> {
@@ -193,6 +199,7 @@ impl<R: Real> Parameters<R> {
             enable_multi_threading: self.enable_multi_threading,
             spatial_decomposition: self.spatial_decomposition.clone(),
             global_neighborhood_list: self.global_neighborhood_list,
+            use_gpu: self.use_gpu
         })
     }
 }
@@ -372,11 +379,19 @@ pub fn reconstruct_surface_inplace<'a, I: Index, R: Real>(
 
     match &parameters.spatial_decomposition {
         Some(SpatialDecomposition::UniformGrid(_)) => {
-            reconstruction::reconstruct_surface_subdomain_grid::<I, R>(
-                particle_positions,
-                parameters,
-                output_surface,
-            )?
+            if parameters.use_gpu {
+                gpu::reconstruction::reconstruct_surface_subdomain_grid_gpu::<I, R>(
+                    particle_positions,
+                    parameters,
+                    output_surface,
+                )?
+            } else {
+                reconstruction::reconstruct_surface_subdomain_grid::<I, R>(
+                    particle_positions,
+                    parameters,
+                    output_surface,
+                )?
+            }
         }
         None => reconstruction::reconstruct_surface_global(
             particle_positions,
