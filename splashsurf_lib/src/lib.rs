@@ -31,6 +31,7 @@ pub use nalgebra;
 use nalgebra::Vector3;
 use std::borrow::Cow;
 use std::hash::Hash;
+use std::sync::{Arc, Mutex};
 use thiserror::Error as ThisError;
 /// Re-export the version of `vtkio` used by this crate, if vtk support is enabled
 #[cfg(feature = "vtk_extras")]
@@ -40,6 +41,7 @@ pub use crate::aabb::{Aabb2d, Aabb3d, AxisAlignedBoundingBox};
 pub use crate::density_map::DensityMap;
 pub use crate::traits::{Index, Real, RealConvert, ThreadSafe};
 pub use crate::uniform_grid::UniformGrid;
+pub use crate::gpu::kernel::OpenCLData;
 
 use crate::density_map::DensityMapError;
 use crate::marching_cubes::MarchingCubesError;
@@ -199,7 +201,7 @@ impl<R: Real> Parameters<R> {
             enable_multi_threading: self.enable_multi_threading,
             spatial_decomposition: self.spatial_decomposition.clone(),
             global_neighborhood_list: self.global_neighborhood_list,
-            use_gpu: self.use_gpu
+            use_gpu: self.use_gpu,
         })
     }
 }
@@ -294,6 +296,14 @@ pub enum ReconstructionError<I: Index, R: Real> {
     Unknown(#[from] anyhow::Error),
 }
 
+/// Initializes the gpu program and kernels.
+///
+/// This should be used preferably only once, because initializing can take up to 100+ milliseconds
+pub fn init_kernels() -> opencl3::Result<OpenCLData> {
+    gpu::kernel::init_kernels()
+}
+
+
 /// Initializes the global thread pool used by this library with the given parameters.
 ///
 /// Initialization of the global thread pool happens exactly once.
@@ -311,9 +321,10 @@ pub fn initialize_thread_pool(num_threads: usize) -> Result<(), anyhow::Error> {
 pub fn reconstruct_surface<I: Index, R: Real>(
     particle_positions: &[Vector3<R>],
     parameters: &Parameters<R>,
+    ocl_data: Arc<Mutex<OpenCLData>>,
 ) -> Result<SurfaceReconstruction<I, R>, ReconstructionError<I, R>> {
     let mut surface = SurfaceReconstruction::default();
-    reconstruct_surface_inplace(particle_positions, parameters, &mut surface)?;
+    reconstruct_surface_inplace(particle_positions, parameters, &mut surface, ocl_data)?;
     Ok(surface)
 }
 
@@ -322,6 +333,7 @@ pub fn reconstruct_surface_inplace<'a, I: Index, R: Real>(
     particle_positions: &[Vector3<R>],
     parameters: &Parameters<R>,
     output_surface: &'a mut SurfaceReconstruction<I, R>,
+    ocl_data: Arc<Mutex<OpenCLData>>,
 ) -> Result<(), ReconstructionError<I, R>> {
     // Clear the existing mesh
     output_surface.mesh.clear();
@@ -384,6 +396,7 @@ pub fn reconstruct_surface_inplace<'a, I: Index, R: Real>(
                     particle_positions,
                     parameters,
                     output_surface,
+                    ocl_data,
                 )?
             } else {
                 reconstruction::reconstruct_surface_subdomain_grid::<I, R>(

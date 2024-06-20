@@ -7,10 +7,13 @@ use rayon::prelude::*;
 use splashsurf_lib::mesh::{AttributeData, Mesh3d, MeshAttribute, MeshWithData};
 use splashsurf_lib::nalgebra::{Unit, Vector3};
 use splashsurf_lib::sph_interpolation::SphInterpolator;
-use splashsurf_lib::{profile, Aabb3d, Index, Real};
+use splashsurf_lib::{profile, Aabb3d, Index, Real, init_kernels, OpenCLData};
 use std::borrow::Cow;
 use std::convert::TryFrom;
 use std::path::PathBuf;
+use std::ptr;
+use std::ptr::null;
+use std::sync::{Arc, Mutex};
 
 use arguments::*;
 
@@ -378,9 +381,23 @@ pub fn reconstruct_subcommand(cmd_args: &ReconstructSubcommandArgs) -> Result<()
         None
     };
 
+
+    // Load gpu kernels
+    let ocl_data = if args.params.use_gpu {
+        if cmd_args.parallelize_over_files.into_bool() {
+            panic!("TODO: Multithreading with GPU is not yet implemented, remove either the gpu or parallelize over files flag")
+        }
+        Arc::new(Mutex::new(
+            init_kernels().expect("Could not initialize GPU kernels")
+        ))
+    } else {
+        // This Arc should not be used later in the code if use_gpu was not enabled.
+        unsafe{ Arc::from_raw(null()) }
+    };
+
     let result = if cmd_args.parallelize_over_files.into_bool() {
         paths.par_iter().try_for_each(|path| {
-            reconstruction_pipeline(path, &args)
+            reconstruction_pipeline(path, &args, ocl_data.clone()) // None instead of ocl data, because multithreaded gpu is not yet implemented
                 .with_context(|| {
                     format!(
                         "Error while processing input file \"{}\" from a file sequence",
@@ -399,7 +416,7 @@ pub fn reconstruct_subcommand(cmd_args: &ReconstructSubcommandArgs) -> Result<()
         })
     } else {
         paths.iter().try_for_each(|path| {
-            reconstruction_pipeline(path, &args).and_then(|_| {
+            reconstruction_pipeline(path, &args, ocl_data.clone()).and_then(|_| {
                 logging::get_progress_bar().map(|pb| pb.inc(1));
                 Ok(())
             })
@@ -874,6 +891,7 @@ mod arguments {
 pub(crate) fn reconstruction_pipeline(
     paths: &ReconstructionRunnerPaths,
     args: &ReconstructionRunnerArgs,
+    ocl_data: Arc<Mutex<OpenCLData>>
 ) -> Result<(), anyhow::Error> {
     if args.use_double_precision {
         info!("Using double precision (f64) for surface reconstruction.");
@@ -882,6 +900,7 @@ pub(crate) fn reconstruction_pipeline(
             &args.params,
             &args.io_params,
             &args.postprocessing,
+            ocl_data
         )?;
     } else {
         info!("Using single precision (f32) for surface reconstruction.");
@@ -892,6 +911,7 @@ pub(crate) fn reconstruction_pipeline(
             ))?,
             &args.io_params,
             &args.postprocessing,
+            ocl_data
         )?;
     }
 
@@ -904,6 +924,7 @@ pub(crate) fn reconstruction_pipeline_generic<I: Index, R: Real>(
     params: &splashsurf_lib::Parameters<R>,
     io_params: &io::FormatParameters,
     postprocessing: &ReconstructionRunnerPostprocessingArgs,
+    ocl_data: Arc<Mutex<OpenCLData>>
 ) -> Result<(), anyhow::Error> {
     profile!("surface reconstruction");
 
@@ -922,7 +943,7 @@ pub(crate) fn reconstruction_pipeline_generic<I: Index, R: Real>(
 
     // Perform the surface reconstruction
     let reconstruction =
-        splashsurf_lib::reconstruct_surface::<I, R>(particle_positions.as_slice(), params)?;
+        splashsurf_lib::reconstruct_surface::<I, R>(particle_positions.as_slice(), params, ocl_data)?;
 
     let grid = reconstruction.grid();
     let mut mesh_with_data = MeshWithData::new(Cow::Borrowed(reconstruction.mesh()));

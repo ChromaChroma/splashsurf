@@ -96,9 +96,9 @@ impl<I: Index, R: Real> ParametersSubdomainGrid<I, R> {
 /// Result of the subdomain decomposition procedure
 pub(crate) struct Subdomains<I: Index> {
     // Flat subdomain coordinate indices (same order as the particle list)
-    flat_subdomain_indices: Vec<I>,
+    pub flat_subdomain_indices: Vec<I>,
     // Particles of each subdomain (including ghost particles)
-    per_subdomain_particles: Vec<Vec<usize>>,
+    pub per_subdomain_particles: Vec<Vec<usize>>,
 }
 
 pub(crate) fn initialize_parameters<'a, I: Index, R: Real>(
@@ -110,11 +110,11 @@ pub(crate) fn initialize_parameters<'a, I: Index, R: Real>(
 
     let Some(SpatialDecomposition::UniformGrid(grid_parameters)) =
         &parameters.spatial_decomposition
-    else {
-        return Err(anyhow!(
+        else {
+            return Err(anyhow!(
             "spatial decomposition parameters for uniform grid are missing"
         ));
-    };
+        };
 
     // A subdomain will be a cube consisting of this number of MC cubes along each coordinate axis
     let subdomain_cubes_in = grid_parameters.subdomain_num_cubes_per_dim;
@@ -177,7 +177,7 @@ pub(crate) fn initialize_parameters<'a, I: Index, R: Real>(
             .map(|c| <GlobalIndex as NumCast>::from(c).unwrap()),
         cube_size,
     )
-    .context("construct initial global marching cubes cell grid")?;
+        .context("construct initial global marching cubes cell grid")?;
     trace!("Initial global MC Grid: {:?}", global_mc_grid);
 
     // MC cubes along each coordinate axis of the entire global MC background grid
@@ -196,14 +196,14 @@ pub(crate) fn initialize_parameters<'a, I: Index, R: Real>(
             num_subdomains[2].checked_mul(subdomain_cubes_global)?,
         ])
     })()
-    .context("compute global number of marching cubes cells per dimension")?;
+        .context("compute global number of marching cubes cells per dimension")?;
 
     let global_mc_grid = UniformCartesianCubeGrid3d::<GlobalIndex, R>::new(
         &global_mc_grid.aabb().min(),
         &num_global_mc_cells,
         cube_size,
     )
-    .context("construct final global marching cubes cell grid")?;
+        .context("construct final global marching cubes cell grid")?;
     trace!("Global MC Grid: {:?}", global_mc_grid);
 
     // Convert number of subdomains back to local index type
@@ -214,13 +214,13 @@ pub(crate) fn initialize_parameters<'a, I: Index, R: Real>(
             I::from(num_subdomains[2])?,
         ])
     })()
-    .context("convert number of subdomains per dimension to local index type")?;
+        .context("convert number of subdomains per dimension to local index type")?;
 
     // Compute total number of subdomains
     let subdomain_count: I = (|| -> Option<_> {
         num_subdomains[0].checked_mul(&num_subdomains[1].checked_mul(&num_subdomains[2])?)
     })()
-    .context("compute total number of subdomains")?;
+        .context("compute total number of subdomains")?;
     // Edge length of a subdomain in absolute units
     let subdomain_size = cube_size * subdomain_cubes.to_real_unchecked();
     // Background grid of the subdomains
@@ -738,7 +738,7 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
                                 subdomain_grid: &UniformCartesianCubeGrid3d<I, R>,
                                 subdomain_index: I,
                                 local_edge: &EdgeIndex<I>|
-     -> (I, EdgeIndex<I>) {
+                                -> (I, EdgeIndex<I>) {
         // We globalize the boundary edge index by translating the local edge index to the subdomain
         // where it lies on the lower boundary of that domain.
 
@@ -784,7 +784,7 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
                     // (globalization is not needed on the outermost boundary of the entire problem domain)
                     target_subdomain_ijk[orth_axis.dim()] = (target_subdomain_ijk[orth_axis.dim()]
                         + I::one())
-                    .min(max_subdomain_index[orth_axis.dim()]);
+                        .min(max_subdomain_index[orth_axis.dim()]);
                     // Move origin point from max boundary to min boundary
                     target_local_origin_ijk[orth_axis.dim()] = I::zero();
                 }
@@ -860,7 +860,7 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
             &[parameters.subdomain_cubes; 3],
             parameters.cube_size,
         )
-        .unwrap();
+            .unwrap();
 
         levelset_grid.fill(R::zero());
         levelset_grid.resize(mc_total_points.to_usize().unwrap(), R::zero());
@@ -1111,7 +1111,7 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
             &[parameters.subdomain_cubes; 3],
             parameters.cube_size,
         )
-        .unwrap();
+            .unwrap();
 
         levelset_grid.fill(R::zero());
         levelset_grid.resize(mc_total_points.to_usize().unwrap(), R::zero());

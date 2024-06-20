@@ -3,6 +3,12 @@
 //! For documentation of the CLI see the [README](https://github.com/InteractiveComputerGraphics/splashsurf) in the project repository.
 //! The reconstruction procedure and other internals of the CLI are provided by the [`splashsurf_lib`] crate.
 
+use anyhow::Context;
+use clap::Parser;
+use log::info;
+
+use crate::allocator::GetPeakAllocatedMemory;
+
 mod convert;
 mod io;
 mod reconstruction;
@@ -11,13 +17,6 @@ mod allocator;
 mod logging;
 #[cfg(test)]
 mod tests;
-
-use std::collections::{HashMap, HashSet};
-use crate::allocator::GetPeakAllocatedMemory;
-use anyhow::Context;
-use clap::Parser;
-use log::info;
-use splashsurf_lib::profiling::{PROFILER, ScopeId};
 
 // Register allocator to track memory usage, might decrease performance if enabled
 register_counting_allocator!(GLOBAL_ALLOCATOR, enable = false);
