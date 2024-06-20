@@ -66,6 +66,13 @@ serde_json = { version = "1.0", optional = true }
 # Needed for profiling feature
 lazy_static = { version = "1.4", optional = true }
 
+# GPU OpenCL 3.0
+opencl3 = "0.9"
+#[dependencies.opencl3]
+#version = "0.9"
+#features = ["CL_VERSION_2_1", "CL_VERSION_2_2", "CL_VERSION_3_0"]
+#features = ["cl_khr_gl_sharing", "cl_khr_dx9_media_sharing", "serde"]
+
 [dev-dependencies]
 criterion = "0.5.1"
 ultraviolet = "0.9"
