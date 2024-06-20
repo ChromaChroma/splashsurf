@@ -118,6 +118,18 @@ pub struct ReconstructSubcommandArgs {
     #[arg(help_heading = ARGS_ADV, long, short = 'n')]
     pub num_threads: Option<usize>,
 
+
+    /// Enable on-GPU computation of reconstruction
+    #[arg(
+        help_heading = ARGS_ADV,
+        long = "gpu",
+        default_value = "off",
+        value_name = "off|on",
+        ignore_case = true,
+        require_equals = true
+    )]
+    pub use_gpu: Switch,
+
     /// Enable spatial decomposition using a regular grid-based approach
     #[arg(
         help_heading = ARGS_OCTREE,
@@ -537,6 +549,7 @@ mod arguments {
                 enable_multi_threading: args.parallelize_over_particles.into_bool(),
                 spatial_decomposition,
                 global_neighborhood_list: args.mesh_smoothing_weights.into_bool(),
+                use_gpu: args.use_gpu.into_bool()
             };
 
             // Optionally initialize thread pool
