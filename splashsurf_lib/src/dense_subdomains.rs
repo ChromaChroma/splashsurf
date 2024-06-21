@@ -28,7 +28,7 @@ use crate::{Index, Real};
 
 // TODO: Implement single-threaded processing
 
-type GlobalIndex = u64;
+pub(crate) type GlobalIndex = u64;
 
 /// Converts any literal or expression to the Index type I (panics if value does not fit)
 macro_rules! to_index {
@@ -39,6 +39,7 @@ macro_rules! to_index {
         <I as NumCast>::from($value).expect("value has to fit in index type")
     };
 }
+pub(crate) use to_index;
 
 /// Converts any literal or expression to the Real type R (panics if value does not fit)
 macro_rules! to_real {
@@ -49,27 +50,28 @@ macro_rules! to_real {
         <R as NumCast>::from($value).expect("value has to fit in real type")
     };
 }
+pub(crate) use to_real;
 
 pub(crate) struct ParametersSubdomainGrid<I: Index, R: Real> {
     /// SPH particle radius (in simulation units)
     #[allow(unused)]
     particle_radius: R,
     /// Rest mass of each particle
-    particle_rest_mass: R,
+    pub(crate) particle_rest_mass: R,
     /// SPH kernel compact support radius (in simulation units)
-    compact_support_radius: R,
+    pub(crate) compact_support_radius: R,
     /// Density value for the iso-surface
-    surface_threshold: R,
+    pub(crate) surface_threshold: R,
     /// MC cube size (in simulation units)
-    cube_size: R,
+    pub(crate) cube_size: R,
     /// Size of a subdomain in multiplies of MC cubes
-    subdomain_cubes: I,
+    pub(crate) subdomain_cubes: I,
     /// Margin for ghost particles around each subdomain
     ghost_particle_margin: R,
     /// Implicit global MC background grid (required to compute consistent float coordinates at domain boundaries)
-    global_marching_cubes_grid: UniformCartesianCubeGrid3d<GlobalIndex, R>,
+    pub(crate) global_marching_cubes_grid: UniformCartesianCubeGrid3d<GlobalIndex, R>,
     /// Implicit subdomain grid
-    subdomain_grid: UniformCartesianCubeGrid3d<I, R>,
+    pub(crate) subdomain_grid: UniformCartesianCubeGrid3d<I, R>,
     /// Chunk size for chunked parallel processing
     chunk_size: usize,
     /// Whether to return the global particle neighborhood list instead of only using per-domain lists internally
@@ -1899,7 +1901,7 @@ fn reserve_total<T>(vec: &mut Vec<T>, total_capacity: usize) {
 }
 
 /// Gathers particle related data from global storage to subdomain storage
-fn gather_subdomain_data<T: Copy>(
+pub(crate) fn gather_subdomain_data<T: Copy>(
     global_data: &[T],
     subdomain_particle_indices: &[usize],
     subdomain_data: &mut Vec<T>,
