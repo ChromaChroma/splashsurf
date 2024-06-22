@@ -1,5 +1,5 @@
+use std::{ptr, thread};
 use std::cell::RefCell;
-use std::ptr;
 use std::sync::Arc;
 
 use itertools::Itertools;
@@ -10,7 +10,7 @@ use opencl3::command_queue::{cl_event, CL_NON_BLOCKING, CL_QUEUE_ON_DEVICE, CL_Q
 use opencl3::event::Event;
 use opencl3::kernel::ExecuteKernel;
 use opencl3::memory::{Buffer, CL_MEM_READ_ONLY, CL_MEM_READ_WRITE, CL_MEM_WRITE_ONLY};
-use opencl3::types::{cl_double, cl_int, cl_long, cl_ulong};
+use opencl3::types::{cl_double, cl_float, cl_int, cl_long, cl_ulong};
 use parking_lot::Mutex;
 use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelRefIterator;
@@ -19,7 +19,7 @@ use thread_local::ThreadLocal;
 
 use crate::{exec_time, Index, new_map, OpenCLData, profile, Real};
 use crate::dense_subdomains::{gather_subdomain_data, GlobalIndex, ParametersSubdomainGrid, Subdomains, SurfacePatch, to_real};
-use crate::gpu::debug::{log_kernel_exec_time, print_non_zero_values, write_non_zero_values};
+use crate::gpu::debug::{log_kernel_exec_time, print_non_zero_values, write_non_zero_indexed_values, write_non_zero_values};
 use crate::gpu::kernel::{COMPUTE_BOUNDS_FUNCTION, DENSITY_GRID_LOOP_FUNCTION, RECONSTRUCT_FUNCTION};
 use crate::gpu::utils::{as_read_buffer_non_blocking, new_queue, new_write_buffer, read_buffer_into};
 use crate::kernel::{CubicSplineKernel, SymmetricKernel3d};
@@ -300,26 +300,31 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
             };
 
             // TODO: No need to read if next kernel does not depend on it.
-            let mut results = &mut vec![cl_double::zero(); levelset_grid.len()];
+            let mut results = vec![cl_double::zero(); levelset_grid.len()];
             read_buffer_into(&queue, &bounds_kernel_event, &levelset_grid_buffer, &mut results);
 
-
-            // print_non_zero_values(results.clone());
-
             // exec_time!(&bounds_kernel_event, COMPUTE_BOUNDS_FUNCTION);
+            // print_non_zero_values(results.clone());
+            // println!("{}, {}", nr_of_particles, results.len());
+            // write_non_zero_values(
+            //     format!("z-{:?}-gpu.txt", thread::current().id()).to_string(),
+            //     results.clone().to_vec(),
+            // );
 
-            // // TODO
-            *levelset_grid = results.to_vec().clone()
+
+            *levelset_grid = results
                 .into_iter()
                 .map(|x| R::from(x).unwrap())
                 .collect();
 
-            // println!("{}, {}", nr_of_particles, results.len());
-            // write_non_zero_values("gpu.txt".to_string(),results.to_vec());
+
+            // results
+            //     .into_iter()
+            //     .enumerate()
+            //     .for_each(|(i, x)|levelset_grid[i] = R::from(x).unwrap());
 
 
-
-            // for (inxdx , (p_i, rho_i)) in subdomain_particles
+            // for (inxdx, (p_i, rho_i)) in subdomain_particles
             //     .iter()
             //     .copied()
             //     .zip(subdomain_particle_densities.iter().copied())
@@ -329,18 +334,6 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
             //
             //     // Get grid cell containing particle
             //     let particle_cell = mc_grid.enclosing_cell(&p_i);
-            //     // if inxdx ==0  ||inxdx ==1  {
-            //     //     let flattened_ps = subdomain_particles
-            //     //         .iter()
-            //     //         .copied()
-            //     //         .zip(subdomain_particle_densities.iter().copied())
-            //     //         .flat_map(|(vec, rho)| [vec.x.to_f64().unwrap(), vec.y.to_f64().unwrap(), vec.z.to_f64().unwrap(), rho.to_f64().unwrap()])
-            //     //         .collect::<Vec<f64>>();
-            //     //     println!("{}::{:?} List:{:?}", inxdx, p_i, flattened_ps.into_iter().take(10).collect::<Vec<f64>>());
-            //     //
-            //     // }
-            //     //
-            //     // levelset_grid[inxdx] += R::from(p_i[0]).unwrap();
             //
             //     // Compute lower and upper bounds of the grid points possibly affected by the particle
             //     // We want to loop over the vertices of the enclosing cells plus all points in `cube_radius` distance from the cell
@@ -350,7 +343,6 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
             //         (particle_cell[1] - cube_radius).max(I::zero()),
             //         (particle_cell[2] - cube_radius).max(I::zero()),
             //     ];
-            //
             //
             //
             //     // We add 2 because
@@ -373,7 +365,8 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
             //                     .expect("point has to be part of the subdomain grid");
             //                 //let point_coordinates = mc_grid.point_coordinates(&point);
             //
-            //                 let [i, j, k] = point_ijk.map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
+            //                 let [i, j, k] = point_ijk
+            //                     .map(|i| <GlobalIndex as NumCast>::from(i).unwrap());
             //                 // Use global coordinate calculation for consistency with neighboring domains
             //                 let global_point_ijk = [
             //                     subdomain_ijk[0] * cells_per_subdomain[0] + i,
@@ -392,61 +385,77 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
             //
             //
             //                 let dx = p_i - point_coordinates;
+            //
             //                 let dx_norm_sq = dx.norm_squared();
             //
             //
-            //                 //
-            //                 // // levelset_grid[inxdx] +=  R::from(
-            //                 // //     dx_norm_sq
-            //                 // // ).expect("dddd");
-            //                 //
-            //                 // if dx_norm_sq < squared_support_with_margin {
-            //                 //     let v_i = parameters.particle_rest_mass / rho_i;
-            //                 //     let r = dx_norm_sq.sqrt();
-            //                 //
-            //                 //     let w_ij = kernel.evaluate(r);
-            //                 //
-            //                 //     let interpolated_value = v_i * w_ij;
-            //                 //
-            //                 //     let flat_point_idx = mc_grid.flatten_point_index(&local_point);
-            //                 //     let flat_point_idx = flat_point_idx.to_usize().unwrap();
-            //                 //     levelset_grid[flat_point_idx] += interpolated_value;
-            //                 //     // if (flat_point_idx == 71089) {
-            //                 //     //     levelset_grid[inxdx] += interpolated_value;
-            //                 //     //     levelset_grid[0] += interpolated_value;
-            //                 //     //     // out[id] += interpolated_value;
-            //                 //     // }
-            //                 //
-            //                 // }
+            //                 // levelset_grid[inxdx] +=  R::from(
+            //                 //     dx_norm_sq
+            //                 // ).expect("dddd");
+            //
+            //                 if dx_norm_sq < squared_support_with_margin {
+            //                     let v_i = parameters.particle_rest_mass / rho_i;
+            //                     let r = dx_norm_sq.sqrt();
+            //
+            //
+            //                     let w_ij = kernel.evaluate(r);
+            //
+            //
+            //                     // levelset_grid[inxdx] += w_ij;
+            //
+            //                     let interpolated_value = v_i * w_ij;
+            //
+            //                     let flat_point_idx = mc_grid.flatten_point_index(&local_point);
+            //                     let flat_point_idx = flat_point_idx.to_usize().unwrap();
+            //                     // levelset_grid[flat_point_idx] += interpolated_value;
+            //
+            //
+            //                     if flat_point_idx == 234626 {
+            //                         levelset_grid[0] += interpolated_value;
+            //                         // println!(
+            //                         //     "234626 (p:{}): {},{},{}\n{:?}",
+            //                         //      inxdx, i, j, k,
+            //                         //     p_i
+            //                         // );
+            //                     }
+            //
+            //
+            //                     // if (flat_point_idx == 71089) {
+            //                     //     levelset_grid[inxdx] += interpolated_value;
+            //                     //     levelset_grid[0] += interpolated_value;
+            //                     //     // out[id] += interpolated_value;
+            //                     // }
+            //                 }
             //             }
             //         }
             //     }
             // }
 
-            // write_non_zero_values("cpu.txt".to_string(),levelset_grid.clone().to_vec());
+            // results.clone()
+            //     .iter()
+            //     .zip(levelset_grid.clone().iter())
+            //     .for_each(|(x, y)| println!("{}\n{}", x, y));
+            //
+            // write_non_zero_values(
+            //     format!("z-{:?}-cpu.txt", thread::current().id()),
+            //     levelset_grid.clone().to_vec(),
+            // );
 
-            // *levelset_grid = levelset_grid_f64.to_vec().clone().into_iter().map(|x| R::from(x).unwrap()).collect();
 
-
-            /////////////////////////////////////
-            //// Debug Compare GPU and CPU implementation results
-            ////////////////////////////////////
-
-            // let list: Vec<f64> = levelset_grid_f64.clone()
+            // let list: Vec<(usize, f64)> = results.clone()
             //     .into_iter()
             //     .zip(levelset_grid.clone().into_iter())
-            //     .map(|(x, y)| x - y.to_f64().unwrap())
-            //     .collect();
+            //     .enumerate()
+            //     .map(|(i, (x, y))| (i, x - y.to_f64().unwrap()))
+            //     .sorted_by(|(i0, a), (i1, b)| PartialOrd::partial_cmp(a, b).unwrap())
             //
-            // write_non_zero("log-diff.txt".to_string(), list.clone());
-            // write_non_zero("log.txt".to_string(), levelset_grid_f64.clone());
-            // write_non_zero_R(levelset_grid.clone());
-            // print_non_zero(levelset_grid_f64.clone());
-            // print_nr_of_zero(levelset_grid_f64.clone());
-
-            /////////////////////////////////////
-            //// END Debug Compare GPU and CPU implementation results
-            ////////////////////////////////////
+            //     // .map(|(i, (x, y))| (i, x - y.to_f64().unwrap()))
+            //     // .sorted_by(|(i1, a), (i2, b)| PartialOrd::partial_cmp(b, a).unwrap())
+            //     .collect();
+            // write_non_zero_indexed_values(
+            //     format!("z-{:?}-diff.txt", thread::current().id()),
+            //     list.clone().to_vec(),
+            // );
         }
 
         let mut vertices = Vec::new();

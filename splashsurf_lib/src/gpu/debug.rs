@@ -26,8 +26,19 @@ pub fn write_non_zero_values<R: Real>(file: String, values: Vec<R>) -> io::Resul
     let mut file = std::fs::File::create(file)?;
     for (i, x) in values.iter().enumerate() {
         // if *x != R::zero() {
-            write!(file, "{}->{}\n", i, x)?;
+        write!(file, "{}->{}\n", i, x)?;
         // }
+    }
+    file.flush()?;
+
+    Ok(())
+}
+pub fn write_non_zero_indexed_values<R: Real>(file: String, values: Vec<(usize, R)>) -> io::Result<()> {
+    let mut file = std::fs::File::create(file)?;
+    for (i, (idx, x)) in values.iter().enumerate() {
+        if *x != R::zero() {
+        write!(file, "{}->{}\n", idx, x)?;
+        }
     }
     file.flush()?;
 
