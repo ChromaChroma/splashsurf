@@ -8,6 +8,7 @@ use crate::profile;
 const SHADER_CODE: &str = include_str!("shaders.cl");
 // Kernel function names
 pub const TEST_KERNEL: &str = "fill_arr";
+pub const COMPUTE_BOUNDS_FUNCTION_NAME: &str = "compute_lower_and_upper";
 
 #[derive()]
 pub struct OpenCLData {
@@ -54,7 +55,7 @@ pub fn init_kernels() -> opencl3::Result<OpenCLData> {
 
     let kernel = {
         profile!("create kernel", parent = p);
-        Kernel::create(&program, TEST_KERNEL).expect("Kernel::create failed")
+        Kernel::create(&program, COMPUTE_BOUNDS_FUNCTION_NAME).expect("Kernel::create failed")
     };
 
 

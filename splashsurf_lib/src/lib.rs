@@ -25,13 +25,16 @@
 //!  performance overhead of the profiling.
 //!
 
+extern crate core;
+
 use log::info;
 /// Re-export the version of `nalgebra` used by this crate
 pub use nalgebra;
 use nalgebra::Vector3;
 use std::borrow::Cow;
 use std::hash::Hash;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
+use parking_lot::Mutex;
 use thiserror::Error as ThisError;
 /// Re-export the version of `vtkio` used by this crate, if vtk support is enabled
 #[cfg(feature = "vtk_extras")]
@@ -392,7 +395,7 @@ pub fn reconstruct_surface_inplace<'a, I: Index, R: Real>(
     match &parameters.spatial_decomposition {
         Some(SpatialDecomposition::UniformGrid(_)) => {
             if parameters.use_gpu {
-                gpu::reconstruction::reconstruct_surface_subdomain_grid_gpu::<I, R>(
+                gpu::reconstruction::reconstruct_surface_subdomain_grid::<I, R>(
                     particle_positions,
                     parameters,
                     output_surface,

@@ -1,3 +1,11 @@
+use anyhow::Context;
+use log::{info, trace};
+use nalgebra::Vector3;
+
+use crate::{
+    density_map, Index, marching_cubes, neighborhood_search, Parameters, profile, Real,
+    ReconstructionError, SurfaceReconstruction,
+};
 use crate::dense_subdomains::{
     compute_global_densities_and_neighbors, decomposition, initialize_parameters, reconstruction,
     stitching, subdomain_classification::GhostMarginClassifier,
@@ -5,13 +13,6 @@ use crate::dense_subdomains::{
 use crate::mesh::TriMesh3d;
 use crate::uniform_grid::UniformGrid;
 use crate::workspace::LocalReconstructionWorkspace;
-use crate::{
-    density_map, marching_cubes, neighborhood_search, profile, Index, Parameters, Real,
-    ReconstructionError, SurfaceReconstruction,
-};
-use anyhow::Context;
-use log::{info, trace};
-use nalgebra::Vector3;
 
 /// Performs a surface reconstruction with a regular grid for domain decomposition
 pub(crate) fn reconstruct_surface_subdomain_grid<'a, I: Index, R: Real>(

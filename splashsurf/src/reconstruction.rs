@@ -1,21 +1,24 @@
-use crate::{io, logging};
-use anyhow::{anyhow, Context};
-use clap::value_parser;
-use indicatif::{ProgressBar, ProgressStyle};
-use log::info;
-use rayon::prelude::*;
-use splashsurf_lib::mesh::{AttributeData, Mesh3d, MeshAttribute, MeshWithData};
-use splashsurf_lib::nalgebra::{Unit, Vector3};
-use splashsurf_lib::sph_interpolation::SphInterpolator;
-use splashsurf_lib::{profile, Aabb3d, Index, Real, init_kernels, OpenCLData};
 use std::borrow::Cow;
 use std::convert::TryFrom;
 use std::path::PathBuf;
 use std::ptr;
 use std::ptr::null;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use anyhow::{anyhow, Context};
+use clap::value_parser;
+use indicatif::{ProgressBar, ProgressStyle};
+use log::info;
+use parking_lot::Mutex;
+use rayon::prelude::*;
 
 use arguments::*;
+use splashsurf_lib::{Aabb3d, Index, init_kernels, OpenCLData, profile, Real};
+use splashsurf_lib::mesh::{AttributeData, Mesh3d, MeshAttribute, MeshWithData};
+use splashsurf_lib::nalgebra::{Unit, Vector3};
+use splashsurf_lib::sph_interpolation::SphInterpolator;
+
+use crate::{io, logging};
 
 // TODO: Detect smallest index type (i.e. check if ok to use i32 as index)
 
@@ -437,18 +440,22 @@ pub fn reconstruct_subcommand(cmd_args: &ReconstructSubcommandArgs) -> Result<()
 
 /// Conversion and validation of command line arguments
 mod arguments {
-    use super::ReconstructSubcommandArgs;
-    use crate::io;
-    use anyhow::{anyhow, Context};
-    use log::info;
-    use regex::{escape, Regex};
-    use splashsurf_lib::nalgebra::Vector3;
-    use splashsurf_lib::Aabb3d;
     use std::convert::TryFrom;
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::str::FromStr;
+
+    use anyhow::{anyhow, Context};
+    use log::info;
+    use regex::{escape, Regex};
     use walkdir::WalkDir;
+
+    use splashsurf_lib::Aabb3d;
+    use splashsurf_lib::nalgebra::Vector3;
+
+    use crate::io;
+
+    use super::ReconstructSubcommandArgs;
 
     pub struct ReconstructionRunnerPostprocessingArgs {
         pub check_mesh_closed: bool,
