@@ -8,6 +8,7 @@ use num_traits::{FromPrimitive, NumCast};
 use parking_lot::Mutex;
 use rayon::prelude::*;
 use std::cell::RefCell;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use thread_local::ThreadLocal;
 
@@ -20,10 +21,7 @@ use crate::neighborhood_search::{
     neighborhood_search_spatial_hashing_parallel, FlatNeighborhoodList,
 };
 use crate::uniform_grid::{EdgeIndex, GridConstructionError, UniformCartesianCubeGrid3d};
-use crate::{
-    new_map, new_parallel_map, profile, Aabb3d, MapType, Parameters, SpatialDecomposition,
-    SurfaceReconstruction,
-};
+use crate::{new_map, new_parallel_map, profile, Aabb3d, MapType, Parameters, SpatialDecomposition, SurfaceReconstruction, OpenCLData};
 use crate::{Index, Real};
 
 // TODO: Implement single-threaded processing
@@ -693,6 +691,7 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
     global_particles: &[Vector3<R>],
     global_particle_densities: &[R],
     subdomains: &Subdomains<I>,
+    ocl_data: Arc<Mutex<OpenCLData>>,
 ) -> Vec<SurfacePatch<I, R>> {
     profile!(parent, "reconstruction");
 

@@ -387,9 +387,6 @@ pub fn reconstruct_subcommand(cmd_args: &ReconstructSubcommandArgs) -> Result<()
 
     // Load gpu kernels
     let ocl_data = if args.params.use_gpu {
-        if cmd_args.parallelize_over_files.into_bool() {
-            panic!("TODO: Multithreading with GPU is not yet implemented, remove either the gpu or parallelize over files flag")
-        }
         Arc::new(Mutex::new(
             init_kernels().expect("Could not initialize GPU kernels")
         ))
@@ -952,8 +949,8 @@ pub(crate) fn reconstruction_pipeline_generic<I: Index, R: Real>(
     let reconstruction =
         splashsurf_lib::reconstruct_surface::<I, R>(particle_positions.as_slice(), params, ocl_data)?;
 
-    //TODO: Remove temporary return (used for gpu implementation outut testing)
-    return Ok(());
+    // //TODO: Remove temporary return (used for gpu implementation outut testing)
+    // return Ok(());
 
     let grid = reconstruction.grid();
     let mut mesh_with_data = MeshWithData::new(Cow::Borrowed(reconstruction.mesh()));

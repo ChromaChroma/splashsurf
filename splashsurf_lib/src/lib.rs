@@ -1,5 +1,6 @@
 #![feature(portable_simd)]
 #![feature(stdarch_x86_avx512)]
+#![feature(slice_take)]
 #![cfg_attr(doc_cfg, feature(doc_cfg))]
 
 //!
@@ -406,6 +407,7 @@ pub fn reconstruct_surface_inplace<'a, I: Index, R: Real>(
                     particle_positions,
                     parameters,
                     output_surface,
+                    ocl_data,
                 )?
             }
         }

@@ -1,11 +1,10 @@
+use std::sync::Arc;
 use anyhow::Context;
 use log::{info, trace};
 use nalgebra::Vector3;
+use parking_lot::Mutex;
 
-use crate::{
-    density_map, Index, marching_cubes, neighborhood_search, Parameters, profile, Real,
-    ReconstructionError, SurfaceReconstruction,
-};
+use crate::{density_map, Index, marching_cubes, neighborhood_search, OpenCLData, Parameters, profile, Real, ReconstructionError, SurfaceReconstruction};
 use crate::dense_subdomains::{
     compute_global_densities_and_neighbors, decomposition, initialize_parameters, reconstruction,
     stitching, subdomain_classification::GhostMarginClassifier,
@@ -19,6 +18,7 @@ pub(crate) fn reconstruct_surface_subdomain_grid<'a, I: Index, R: Real>(
     particle_positions: &[Vector3<R>],
     parameters: &Parameters<R>,
     output_surface: &'a mut SurfaceReconstruction<I, R>,
+    ocl_data: Arc<Mutex<OpenCLData>>,
 ) -> Result<(), anyhow::Error> {
     profile!("surface reconstruction subdomain-grid");
 
@@ -59,6 +59,7 @@ pub(crate) fn reconstruct_surface_subdomain_grid<'a, I: Index, R: Real>(
         &particle_positions,
         &particle_densities,
         &subdomains,
+        ocl_data,
     );
 
     let global_mesh = stitching(surface_patches);

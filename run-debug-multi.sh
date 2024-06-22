@@ -1,5 +1,5 @@
 #! /bin/bash
-cargo run --package splashsurf --bin splashsurf --release \
+RUST_BACKTRACE=1 cargo run --package splashsurf --bin splashsurf \
   -- \
   reconstruct ./data/DoubleDamBreakWithSphere/vtk/ParticleData_Fluid_{}.vtk \
    --start-index=0 --end-index=258 \
@@ -8,4 +8,5 @@ cargo run --package splashsurf --bin splashsurf --release \
   --subdomain-grid=on \
   --mesh-cleanup=on  --mesh-smoothing-weights=on   --mesh-smoothing-iters=25 \
   --normals=on --normals-smoothing-iters=10 \
-  --mt-files=on --mt-particles=on --gpu=on  # Multiple frames parallel processed
+  --mt-files=on --mt-particles=off \
+  --gpu=on # Multiple frames parallel processed

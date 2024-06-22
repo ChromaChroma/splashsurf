@@ -4,7 +4,7 @@ use num_traits::Zero;
 use opencl3::command_queue::{CL_NON_BLOCKING, CL_QUEUE_PROFILING_ENABLE, CommandQueue};
 use opencl3::context::Context;
 use opencl3::event::Event;
-use opencl3::memory::{Buffer, cl_mem_flags, CL_MEM_READ_ONLY};
+use opencl3::memory::{Buffer, cl_mem_flags, CL_MEM_READ_ONLY, CL_MEM_WRITE_ONLY};
 use opencl3::Result;
 
 
@@ -30,33 +30,6 @@ pub fn as_buffer_non_blocking<R>(
 
     Ok((buffer, _buffer_write_event))
 }
-//
-// #[inline(always)]
-// pub fn new_write_buffer<T: NumCast, U: NumCast>(
-//     context: &Context,
-//     queue: &CommandQueue,
-//     data: &[T],
-// ) -> (Buffer<U>, Event) {
-//
-//
-//     let u_data: Vec<U>  = data
-//         .to_vec()
-//         .iter()
-//         .clone()
-//         .map(|&x| U::from(x).unwrap())
-//         .collect();
-//     unsafe {
-//         let mut buffer = Buffer::<U>::create(
-//             context, CL_MEM_WRITE_ONLY, u_data.len(), ptr::null_mut(),
-//         ).expect("Could not create write buffer");
-//
-//         let write_event = queue.enqueue_write_buffer(
-//             &mut buffer, CL_NON_BLOCKING, 0, &u_data, &[],
-//         ).expect("Could not enqueue write buffer");
-//
-//         (buffer, write_event)
-//     }
-// }
 
 #[inline(always)]
 pub fn new_queue(context: &Context) -> CommandQueue {
@@ -84,4 +57,24 @@ pub fn read_buffer_into<U: Zero>(
 
     // Wait for the read_event to complete.
     read_event.wait().expect("Could not read event for retrieving data from GPU buffer");
+}
+
+#[inline(always)]
+pub fn new_write_buffer<U: Zero + Clone >(
+    context: &Context,
+    queue: &CommandQueue,
+    size: usize,
+) -> (Buffer<U>, Event) {
+    let result_vec = &vec![U::zero(); size];
+    unsafe {
+        let mut buffer = Buffer::<U>::create(
+            context, CL_MEM_WRITE_ONLY, size, ptr::null_mut(),
+        ).expect("Could not create write buffer");
+
+        let write_event = queue.enqueue_write_buffer(
+            &mut buffer, CL_NON_BLOCKING, 0, &result_vec, &[],
+        ).expect("Could not enqueue write buffer");
+
+        (buffer, write_event)
+    }
 }
