@@ -3,6 +3,11 @@
 
 #pragma OPENCL EXTENSION cl_khr_fp64 : enable
 #pragma OPENCL EXTENSION cl_khr_int64_base_atomics : enable
+#pragma OPENCL SELECT_ROUNDING_MODE rtp
+#pragma OPENCL EXTENSION cl_khr_int64_base_atomics : enable
+#pragma OPENCL EXTENSION cl_khr_int64_extended_atomics : enable
+
+#define CL_M_PI 3.14159265358979323846264338327950288
 
 void AtomicAdd(__global double *val, double delta) {
   union {
@@ -14,32 +19,12 @@ void AtomicAdd(__global double *val, double delta) {
     ulong i;
   } new;
 
-  
-  // atom_add((volatile __global ulong *)val, (ulong)delta);
-
-
   do {
     old.f = *val;
     new.f = old.f + delta;
   } while (atom_cmpxchg((volatile __global ulong *)val, old.i, new.i) != old.i);
 }
 
-// kernel void atomic_reduce(
-//   ulong n,
-//   global const int    * key,
-//   global const double * val,
-//   global double * sum
-// )
-// {
-//   for(size_t idx = get_global_id(0); idx < n; idx += get_global_size(0))
-//     AtomicAdd(sum + key[idx], val[idx]);
-// }
-
-#pragma OPENCL SELECT_ROUNDING_MODE rtp
-#pragma OPENCL EXTENSION cl_khr_int64_base_atomics : enable
-#pragma OPENCL EXTENSION cl_khr_int64_extended_atomics : enable
-
-#define CL_M_PI 3.14159265358979323846264338327950288
 
 // double atomic_add_float_global(__global double* p, double val)
 // {
@@ -110,7 +95,7 @@ kernel void reconstruct(
 
   double normalization_sigma = 8.0 / (csr * csr * csr);
 
-  // levelset_grid[id] = (long)max(particle_cell.x, (long)0.0);
+  // levelset_grid[id] = (upper_x- lower_x) * (upper_y - lower_y) * (upper_z - lower_z) ;
 
   for (int x = lower_x; x < upper_x; x++) {
     for (int y = lower_y; y < upper_y; y++) {
@@ -165,9 +150,9 @@ kernel void reconstruct(
 
           long flat_point_idx =
               x * long_args[1] * long_args[2] + y * long_args[2] + z;
+          AtomicAdd(levelset_grid + flat_point_idx, interpolated_value);
 
           // atom_add(levelset_grid + flat_point_idx, interpolated_value);
-          AtomicAdd(levelset_grid + flat_point_idx, interpolated_value);
           // levelset_grid[flat_point_idx] += interpolated_value;
 
           //   if (flat_point_idx == 234626) {

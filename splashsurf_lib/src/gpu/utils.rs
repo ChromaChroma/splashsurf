@@ -1,4 +1,5 @@
 use std::ptr;
+use nalgebra::SVector;
 
 use num_traits::Zero;
 use opencl3::command_queue::{CL_NON_BLOCKING, CL_QUEUE_PROFILING_ENABLE, CommandQueue};
@@ -6,6 +7,7 @@ use opencl3::context::Context;
 use opencl3::event::Event;
 use opencl3::memory::{Buffer, cl_mem_flags, CL_MEM_READ_ONLY, CL_MEM_WRITE_ONLY};
 use opencl3::Result;
+use crate::Real;
 
 
 #[inline(always)]
@@ -29,6 +31,12 @@ pub fn as_buffer_non_blocking<R>(
     };
 
     Ok((buffer, _buffer_write_event))
+}
+
+#[inline(always)]
+pub fn to_u64_svec<R: Real, const N: usize>(svec: SVector<R, N>) -> [f64; N] {
+    let arr: [R; N] = svec.as_slice()[0..N].try_into().unwrap();
+    arr.map(|i| i.to_f64().unwrap())
 }
 
 #[inline(always)]
