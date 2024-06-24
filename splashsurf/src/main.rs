@@ -99,7 +99,7 @@ fn run_splashsurf() -> Result<(), anyhow::Error> {
         .unwrap()
         .split("\n")
         .filter(|l| l.len() > 0)
-        .for_each(|l| info!("{}", l));
+        .for_each(|l| println!("{}", l));
 
     // Print memory stats if available
     if let Some(peak_allocation_bytes) = GLOBAL_ALLOCATOR.get_peak_allocated_memory() {
