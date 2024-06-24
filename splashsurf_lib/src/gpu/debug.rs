@@ -21,6 +21,27 @@ pub fn print_nr_of_zero<R: Real>(values: Vec<R>) {
     );
 }
 
+pub fn print_first_last_non_zero_index<R: Real>(values: Vec<R>) {
+    let first_non_zero_index = values.clone()
+        .into_iter()
+        .enumerate()
+        .find(|(i, x)| *x != R::zero())
+        .unwrap()
+        .0;
+    let last_non_zero_index = values.clone()
+        .into_iter()
+        .enumerate()
+        .rev()
+        .find(|(i, x)| *x != R::zero())
+        .unwrap()
+        .0;
+
+    println!("First idx: {}, Last idx: {}",
+             first_non_zero_index,
+             last_non_zero_index
+    );
+}
+
 
 pub fn write_non_zero_values<R: Real>(file: String, values: Vec<R>) -> io::Result<()> {
     let mut file = std::fs::File::create(file)?;
