@@ -1,4 +1,3 @@
-use std::{ptr, thread};
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -6,11 +5,11 @@ use itertools::Itertools;
 use log::info;
 use nalgebra::{SVector, Vector3};
 use num_traits::{NumCast, ToPrimitive, Zero};
-use opencl3::command_queue::{cl_event, CL_NON_BLOCKING, CL_QUEUE_ON_DEVICE, CL_QUEUE_OUT_OF_ORDER_EXEC_MODE_ENABLE, CommandQueue};
 use opencl3::event::Event;
 use opencl3::kernel::ExecuteKernel;
-use opencl3::memory::{Buffer, CL_MEM_READ_ONLY, CL_MEM_READ_WRITE, CL_MEM_WRITE_ONLY};
-use opencl3::types::{cl_double, cl_float, cl_int, cl_long, cl_ulong};
+use opencl3::memory::Buffer;
+use opencl3::program::CL_BUILD_ERROR;
+use opencl3::types::{cl_double, cl_ulong};
 use parking_lot::Mutex;
 use rayon::iter::IndexedParallelIterator;
 use rayon::iter::IntoParallelRefIterator;
@@ -19,9 +18,9 @@ use thread_local::ThreadLocal;
 
 use crate::{exec_time, Index, new_map, OpenCLData, profile, Real};
 use crate::dense_subdomains::{gather_subdomain_data, GlobalIndex, ParametersSubdomainGrid, Subdomains, SurfacePatch, to_real};
-use crate::gpu::debug::{log_kernel_exec_time, print_non_zero_values, write_non_zero_indexed_values, write_non_zero_values};
-use crate::gpu::kernel::{COMPUTE_BOUNDS_FUNCTION, DENSITY_GRID_LOOP_FUNCTION, RECONSTRUCT_FUNCTION};
-use crate::gpu::utils::{as_read_buffer_non_blocking, new_queue, new_write_buffer, read_buffer_into};
+use crate::gpu::debug::{log_kernel_exec_time, print_first_last_non_zero_index, print_non_zero_values, print_nr_of_zero};
+use crate::gpu::kernel::RECONSTRUCT_FUNCTION;
+use crate::gpu::utils::{as_read_buffer_non_blocking, new_queue, new_write_buffer, read_buffer_into, to_u64_svec};
 use crate::kernel::{CubicSplineKernel, SymmetricKernel3d};
 use crate::marching_cubes::marching_cubes_lut::marching_cubes_triangulation_iter;
 use crate::uniform_grid::{EdgeIndex, UniformCartesianCubeGrid3d};
@@ -215,63 +214,73 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
         levelset_grid.fill(R::zero());
         levelset_grid.resize(mc_total_points.to_usize().unwrap(), R::zero());
 
-
         let extents = mc_grid.points_per_dim();
-
-        let mut levelset_grid_f64: Vec<f64> = levelset_grid.clone()
-            .as_slice()
-            .into_iter()
-            .map(|r| r.to_f64().unwrap())
-            .collect();
 
         {
             profile!("density grid loop");
             let nr_of_particles: usize = subdomain_particles.len();
 
             // Create a command_queue on the Context's device
-            let queue = new_queue(&ocl_data.lock().context);
+            let queue = {
+                profile!("queue                   ");
+                new_queue(&ocl_data.lock().context)
+            };
 
             // let (upper_lower_buffer, write_event) =
             //     new_write_buffer(&ocl_data.lock().context, &queue, 2 * nr_of_particles);
-            let (levelset_grid_buffer, write_event): (Buffer<cl_double>, Event) =
-                new_write_buffer(&ocl_data.lock().context, &queue, levelset_grid.len());
+            let (levelset_grid_buffer, write_event): (Buffer<cl_double>, Event) = {
+                profile!("write_buffer            ");
+                new_write_buffer(&ocl_data.lock().context, &queue, levelset_grid.len())
+            };
 
-            // Buffer of subdomain particles - Flattened Point Coordinates [x0, y0, z0, x1, y1, z0, ....]
-            let flattened_ps = subdomain_particles
-                .iter()
-                .copied()
-                .zip(subdomain_particle_densities.iter().copied())
-                .flat_map(|(vec, rho)| [vec.x.to_f64().unwrap(), vec.y.to_f64().unwrap(), vec.z.to_f64().unwrap(), rho.to_f64().unwrap()])
-                .collect::<Vec<f64>>();
-            let (sd_particles_buffer, write_event2): (Buffer<cl_double>, Event) =
+
+            let (sd_particles_buffer, write_event2): (Buffer<cl_double>, Event) = {
+                profile!("read_buffer             ");
+                // Buffer of subdomain particles - Flattened Point Coordinates [x0, y0, z0, x1, y1, z0, ....]
+                let flattened_ps = subdomain_particles
+                    .iter()
+                    .copied()
+                    .zip(subdomain_particle_densities.iter().copied())
+                    .flat_map(|(vec, rho)| [vec.x.to_f64().unwrap(), vec.y.to_f64().unwrap(), vec.z.to_f64().unwrap(), rho.to_f64().unwrap()])
+                    .collect::<Vec<f64>>();
                 as_read_buffer_non_blocking(&ocl_data.lock().context, &queue, &flattened_ps)
-                    .expect("Failed to create particle positions buffer");
+                    .expect("Failed to create particle positions buffer")
+            };
 
-            let np = mc_grid.points_per_dim().into_iter()
-                .map(|x| x.to_u64().unwrap())
-                .collect::<Vec<u64>>();
-            let gmcg_n = parameters.global_marching_cubes_grid.points_per_dim()
-                .into_iter().map(|x| x.to_u64().unwrap())
-                .collect::<Vec<u64>>();
-            let (long_args_buffer, write_event5): (Buffer<cl_ulong>, Event) =
+
+            // Create a command_queue on the Context's device
+            let queue = {
+                profile!("queue                   ");
+                new_queue(&ocl_data.lock().context)
+            };
+
+            let (long_args_buffer, write_event5): (Buffer<cl_ulong>, Event) ={
+                profile!("read_buffer             ");
+                let np = mc_grid.points_per_dim().into_iter()
+                    .map(|x| x.to_u64().unwrap())
+                    .collect::<Vec<u64>>();
+                let gmcg_n = parameters.global_marching_cubes_grid.points_per_dim()
+                    .into_iter().map(|x| x.to_u64().unwrap())
+                    .collect::<Vec<u64>>();
                 as_read_buffer_non_blocking(&ocl_data.lock().context, &queue, &[
                     np[0], np[1], np[2],
                     subdomain_ijk[0], subdomain_ijk[1], subdomain_ijk[2],
                     cells_per_subdomain[0], cells_per_subdomain[1], cells_per_subdomain[2],
                     gmcg_n[0], gmcg_n[1], gmcg_n[2],
-                ]).expect("Failed to create particle density buffer");
+                ]).expect("Failed to create particle density buffer")
+            };
 
 
-            fn to_u64_svec<R: Real, const N: usize>(svec: SVector<R, N>) -> [f64; N] {
-                let arr: [R; N] = svec.as_slice()[0..N].try_into().unwrap();
-                arr.map(|i| i.to_f64().unwrap())
-            }
-            let (gmcg_aabb_min, buffer_w_e8): (Buffer<cl_double>, Event) =
+
+            let (gmcg_aabb_min, buffer_w_e8): (Buffer<cl_double>, Event) = {
+                profile!("read_buffer             ");
                 as_read_buffer_non_blocking(&ocl_data.lock().context, &queue, &to_u64_svec(*parameters.global_marching_cubes_grid.aabb().min()))
-                    .expect("Failed to create particle positions buffer");
+                    .expect("Failed to create particle positions buffer")
+            };
 
-            let min = mc_grid.aabb().min();
-            let bounds_kernel_event = unsafe {
+            let kernel_event = unsafe {
+                let min = mc_grid.aabb().min();
+                profile!("enqueue range           ");
                 ExecuteKernel::new(ocl_data.lock().kernels.get(RECONSTRUCT_FUNCTION).unwrap())
                     .set_arg(&squared_support_with_margin.to_f64().unwrap())
                     .set_arg(&parameters.particle_rest_mass.to_f64().unwrap())
@@ -281,16 +290,12 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
                     .set_arg(&mc_grid.cell_size().to_f64().unwrap())
                     .set_arg(&min.x.to_f64().unwrap()).set_arg(&min.y.to_f64().unwrap()).set_arg(&min.z.to_f64().unwrap())
                     .set_arg(&parameters.compact_support_radius.to_f64().unwrap())
-
                     .set_arg(&long_args_buffer)
                     .set_wait_event(&write_event5)
-
                     .set_arg(&gmcg_aabb_min)
                     .set_wait_event(&buffer_w_e8)
-
                     .set_arg(&sd_particles_buffer)
                     .set_wait_event(&write_event2)
-
                     // Output buffer
                     .set_arg(&levelset_grid_buffer)
                     .set_wait_event(&write_event)
@@ -299,23 +304,32 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
                     .expect("Could not build, or execute kernel")
             };
 
-            // TODO: No need to read if next kernel does not depend on it.
+            // // TODO: No need to read if next kernel does not depend on it.
             let mut results = vec![cl_double::zero(); levelset_grid.len()];
-            read_buffer_into(&queue, &bounds_kernel_event, &levelset_grid_buffer, &mut results);
+            {
+                profile!("read results            ");
+                read_buffer_into(&queue, &kernel_event, &levelset_grid_buffer, &mut results);
+            }
+
+            // exec_time!(&kernel_event);
 
             // exec_time!(&bounds_kernel_event, COMPUTE_BOUNDS_FUNCTION);
             // print_non_zero_values(results.clone());
+            print_nr_of_zero(results.clone());
+            print_first_last_non_zero_index(results.clone());
             // println!("{}, {}", nr_of_particles, results.len());
             // write_non_zero_values(
             //     format!("z-{:?}-gpu.txt", thread::current().id()).to_string(),
             //     results.clone().to_vec(),
             // );
 
-
-            *levelset_grid = results
-                .into_iter()
-                .map(|x| R::from(x).unwrap())
-                .collect();
+            {
+                profile!("results -> levelset_grid");
+                *levelset_grid = results
+                    .into_iter()
+                    .map(|x| R::from(x).unwrap())
+                    .collect();
+            }
 
 
             // results
@@ -850,6 +864,7 @@ pub(crate) fn reconstruction<I: Index, R: Real>(
 
     surface_patches
 }
+
 
 
 // // TODO: Reduce code duplication between dense and sparse
